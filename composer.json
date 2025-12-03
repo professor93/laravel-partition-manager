@@ -1,0 +1,44 @@
+{
+    "name": "uzbek/laravel-partition-manager",
+    "description": "A Laravel package for managing PostgreSQL partitioned tables",
+    "keywords": ["laravel", "postgresql", "partition", "database", "table-partitioning"],
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Inoyatulloh",
+            "email": "mronx@ya.ru"
+        }
+    ],
+    "require": {
+        "php": "^8.3",
+        "illuminate/support": "^12.0",
+        "illuminate/database": "^12.0",
+        "illuminate/console": "^12.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Uzbek\\LaravelPartitionManager\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Uzbek\\LaravelPartitionManager\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Uzbek\\LaravelPartitionManager\\PartitionManagerServiceProvider"
+            ],
+            "aliases": {
+                "PartitionManager": "Uzbek\\LaravelPartitionManager\\Facades\\PartitionManager"
+            }
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}

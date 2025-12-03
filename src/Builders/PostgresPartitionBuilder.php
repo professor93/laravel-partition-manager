@@ -20,6 +20,8 @@ class PostgresPartitionBuilder
 {
     protected ?Blueprint $blueprint = null;
 
+    protected ?\Closure $tableCallback = null;
+
     protected ?string $connectionName = null;
 
     protected PartitionType $partitionType = PartitionType::RANGE;
@@ -56,6 +58,12 @@ class PostgresPartitionBuilder
     public function setBlueprint(Blueprint $blueprint): self
     {
         $this->blueprint = $blueprint;
+        return $this;
+    }
+
+    public function defineTable(\Closure $callback): self
+    {
+        $this->tableCallback = $callback;
         return $this;
     }
 
@@ -344,6 +352,11 @@ class PostgresPartitionBuilder
 
     protected function createPartitionedTable(Connection $connection): void
     {
+        if ($this->blueprint === null && $this->tableCallback !== null) {
+            $this->blueprint = new Blueprint($connection, $this->table);
+            ($this->tableCallback)($this->blueprint);
+        }
+
         if ($this->blueprint === null) {
             throw new PartitionException(
                 "Blueprint not set. Use Partition::create() or Partition::table() to define the table structure."

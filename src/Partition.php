@@ -7,7 +7,6 @@ namespace Uzbek\LaravelPartitionManager;
 use Closure;
 use Uzbek\LaravelPartitionManager\Builders\PostgresPartitionBuilder;
 use Uzbek\LaravelPartitionManager\Builders\QuickPartitionBuilder;
-use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 
 class Partition
@@ -15,11 +14,7 @@ class Partition
     public static function create(string $table, Closure $callback): PostgresPartitionBuilder
     {
         $builder = new PostgresPartitionBuilder($table);
-
-        $blueprint = new Blueprint($table);
-        $callback($blueprint);
-
-        $builder->setBlueprint($blueprint);
+        $builder->defineTable($callback);
 
         return $builder;
     }

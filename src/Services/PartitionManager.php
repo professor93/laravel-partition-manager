@@ -115,13 +115,15 @@ class PartitionManager
     public function analyzePartition(string $partitionName, ?string $connection = null): void
     {
         $conn = $this->resolveConnection($connection);
-        $this->db->connection($conn)->statement("ANALYZE {$partitionName}");
+        $quotedPartition = self::quoteIdentifier($partitionName);
+        $this->db->connection($conn)->statement("ANALYZE {$quotedPartition}");
     }
 
     public function vacuumPartition(string $partitionName, bool $full = false, ?string $connection = null): void
     {
         $conn = $this->resolveConnection($connection);
-        $sql = $full ? "VACUUM FULL {$partitionName}" : "VACUUM {$partitionName}";
+        $quotedPartition = self::quoteIdentifier($partitionName);
+        $sql = $full ? "VACUUM FULL {$quotedPartition}" : "VACUUM {$quotedPartition}";
         $this->db->connection($conn)->statement($sql);
     }
 
@@ -138,8 +140,9 @@ class PartitionManager
         foreach ($partitions as $partition) {
             if ($this->shouldDropPartition($partition, $before)) {
                 try {
+                    $quotedPartition = self::quoteIdentifier($partition->partition_name);
                     $this->db->connection($conn)->statement(
-                        "DROP TABLE IF EXISTS {$partition->partition_name} CASCADE"
+                        "DROP TABLE IF EXISTS {$quotedPartition} CASCADE"
                     );
                     $dropped[] = $partition->partition_name;
 
@@ -212,5 +215,19 @@ class PartitionManager
     private function resolveConnection(?string $connection): string
     {
         return $connection ?? config('partition-manager.default_connection', 'pgsql');
+    }
+
+    private static function quoteIdentifier(string $identifier): string
+    {
+        // Handle schema.table format
+        if (str_contains($identifier, '.')) {
+            $parts = explode('.', $identifier);
+            return implode('.', array_map(
+                static fn (string $part): string => '"' . str_replace('"', '""', $part) . '"',
+                $parts
+            ));
+        }
+
+        return '"' . str_replace('"', '""', $identifier) . '"';
     }
 }

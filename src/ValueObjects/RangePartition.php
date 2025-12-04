@@ -54,6 +54,14 @@ class RangePartition extends PartitionDefinition
             return "'" . $value->format('Y-m-d') . "'";
         }
 
-        return is_numeric($value) ? (string) $value : "'{$value}'";
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+
+        if (is_numeric($value)) {
+            return (string) $value;
+        }
+
+        return "'" . $value . "'";
     }
 }

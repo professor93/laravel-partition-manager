@@ -244,10 +244,13 @@ class QuickPartitionBuilder
         $fullName = $this->schema !== null ? "{$this->schema}.{$name}" : $name;
 
         if ($this->schema !== null) {
-            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$this->schema}");
+            $quotedSchema = self::quoteIdentifier($this->schema);
+            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$quotedSchema}");
         }
 
-        $sql = "CREATE TABLE IF NOT EXISTS {$fullName} PARTITION OF {$this->table} ";
+        $quotedFullName = self::quoteIdentifier($fullName);
+        $quotedTable = self::quoteIdentifier($this->table);
+        $sql = "CREATE TABLE IF NOT EXISTS {$quotedFullName} PARTITION OF {$quotedTable} ";
         $sql .= "FOR VALUES FROM ('{$from}') TO ('{$to}')";
 
         $connection->statement($sql);
@@ -261,15 +264,18 @@ class QuickPartitionBuilder
         $fullName = $this->schema !== null ? "{$this->schema}.{$name}" : $name;
 
         if ($this->schema !== null) {
-            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$this->schema}");
+            $quotedSchema = self::quoteIdentifier($this->schema);
+            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$quotedSchema}");
         }
 
         $valueList = array_map(
-            static fn (mixed $v): string|int => is_numeric($v) ? $v : "'{$v}'",
+            static fn (mixed $v): string => self::formatSqlValue($v),
             $values
         );
 
-        $sql = "CREATE TABLE IF NOT EXISTS {$fullName} PARTITION OF {$this->table} ";
+        $quotedFullName = self::quoteIdentifier($fullName);
+        $quotedTable = self::quoteIdentifier($this->table);
+        $sql = "CREATE TABLE IF NOT EXISTS {$quotedFullName} PARTITION OF {$quotedTable} ";
         $sql .= "FOR VALUES IN (" . implode(', ', $valueList) . ")";
 
         $connection->statement($sql);
@@ -280,10 +286,13 @@ class QuickPartitionBuilder
         $fullName = $this->schema !== null ? "{$this->schema}.{$name}" : $name;
 
         if ($this->schema !== null) {
-            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$this->schema}");
+            $quotedSchema = self::quoteIdentifier($this->schema);
+            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$quotedSchema}");
         }
 
-        $sql = "CREATE TABLE IF NOT EXISTS {$fullName} PARTITION OF {$this->table} ";
+        $quotedFullName = self::quoteIdentifier($fullName);
+        $quotedTable = self::quoteIdentifier($this->table);
+        $sql = "CREATE TABLE IF NOT EXISTS {$quotedFullName} PARTITION OF {$quotedTable} ";
         $sql .= "FOR VALUES WITH (modulus {$modulus}, remainder {$remainder})";
 
         $connection->statement($sql);
@@ -301,5 +310,45 @@ class QuickPartitionBuilder
         if ($this->partitionColumn === '') {
             throw new PartitionException("Partition column not specified. Use by() method first.");
         }
+    }
+
+    private static function formatSqlValue(mixed $value): string
+    {
+        // Handle arrays for multi-column partitioning
+        if (is_array($value)) {
+            return implode(', ', array_map(
+                static fn (mixed $v): string => self::formatSqlValue($v),
+                $value
+            ));
+        }
+
+        // Handle PostgreSQL partition bound keywords (must be unquoted)
+        if ($value === 'MINVALUE' || $value === 'MAXVALUE') {
+            return $value;
+        }
+
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+
+        if (is_numeric($value)) {
+            return (string) $value;
+        }
+
+        return "'" . $value . "'";
+    }
+
+    private static function quoteIdentifier(string $identifier): string
+    {
+        // Handle schema.table format
+        if (str_contains($identifier, '.')) {
+            $parts = explode('.', $identifier);
+            return implode('.', array_map(
+                static fn (string $part): string => '"' . str_replace('"', '""', $part) . '"',
+                $parts
+            ));
+        }
+
+        return '"' . str_replace('"', '""', $identifier) . '"';
     }
 }

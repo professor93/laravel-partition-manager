@@ -354,6 +354,7 @@ class PostgresPartitionBuilder
     {
         if ($this->blueprint === null && $this->tableCallback !== null) {
             $this->blueprint = new Blueprint($connection, $this->table);
+            $this->blueprint->create();
             ($this->tableCallback)($this->blueprint);
         }
 
@@ -406,22 +407,22 @@ class PostgresPartitionBuilder
         $schema = $partition->getSchema() ?? $this->schemaManager->getDefault();
 
         if ($schema !== null) {
-            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$schema}");
+            $quotedSchema = self::quoteIdentifier($schema);
+            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$quotedSchema}");
             $partitionTable = $schema . '.' . $partitionTable;
         }
 
-        $sql = "CREATE TABLE IF NOT EXISTS {$partitionTable} PARTITION OF {$this->table} ";
+        $quotedPartitionTable = self::quoteIdentifier($partitionTable);
+        $quotedMainTable = self::quoteIdentifier($this->table);
+        $sql = "CREATE TABLE IF NOT EXISTS {$quotedPartitionTable} PARTITION OF {$quotedMainTable} ";
 
         if ($partition instanceof RangePartition) {
-            $from = $partition->getFrom();
-            $to = $partition->getTo();
-
-            $sql .= is_numeric($from)
-                ? "FOR VALUES FROM ({$from}) TO ({$to})"
-                : "FOR VALUES FROM ('{$from}') TO ('{$to}')";
+            $from = self::formatSqlValue($partition->getFrom());
+            $to = self::formatSqlValue($partition->getTo());
+            $sql .= "FOR VALUES FROM ({$from}) TO ({$to})";
         } elseif ($partition instanceof ListPartition) {
             $values = array_map(
-                static fn (mixed $v): string|int => is_numeric($v) ? $v : "'{$v}'",
+                static fn (mixed $v): string => self::formatSqlValue($v),
                 $partition->getValues()
             );
             $sql .= "FOR VALUES IN (" . implode(', ', $values) . ")";
@@ -432,7 +433,7 @@ class PostgresPartitionBuilder
         if ($partition->hasSubPartitions()) {
             $subPartitions = $partition->getSubPartitions()?->toArray() ?? [];
             $subPartitionType = strtoupper($subPartitions['partition_by']['type']);
-            $subPartitionColumn = $subPartitions['partition_by']['column'];
+            $subPartitionColumn = self::quoteIdentifier($subPartitions['partition_by']['column']);
             $sql .= " PARTITION BY {$subPartitionType} ({$subPartitionColumn})";
         }
 
@@ -454,7 +455,8 @@ class PostgresPartitionBuilder
         $subPartitionTable = $subPartition['name'];
 
         if (!empty($subPartition['schema'])) {
-            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$subPartition['schema']}");
+            $quotedSchema = self::quoteIdentifier($subPartition['schema']);
+            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$quotedSchema}");
             $subPartitionTable = $subPartition['schema'] . '.' . $subPartitionTable;
         }
 
@@ -465,7 +467,8 @@ class PostgresPartitionBuilder
         };
 
         if (!empty($subPartition['tablespace'])) {
-            $sql .= " TABLESPACE {$subPartition['tablespace']}";
+            $quotedTablespace = self::quoteIdentifier($subPartition['tablespace']);
+            $sql .= " TABLESPACE {$quotedTablespace}";
         }
 
         $connection->statement($sql);
@@ -476,11 +479,13 @@ class PostgresPartitionBuilder
      */
     private function buildRangeSubPartitionSql(string $tableName, string $parentTable, array $subPartition): string
     {
-        $sql = "CREATE TABLE IF NOT EXISTS {$tableName} PARTITION OF {$parentTable} ";
+        $quotedTable = self::quoteIdentifier($tableName);
+        $quotedParent = self::quoteIdentifier($parentTable);
+        $sql = "CREATE TABLE IF NOT EXISTS {$quotedTable} PARTITION OF {$quotedParent} ";
+        $from = self::formatSqlValue($subPartition['from']);
+        $to = self::formatSqlValue($subPartition['to']);
 
-        return $sql . (is_numeric($subPartition['from'])
-            ? "FOR VALUES FROM ({$subPartition['from']}) TO ({$subPartition['to']})"
-            : "FOR VALUES FROM ('{$subPartition['from']}') TO ('{$subPartition['to']}')");
+        return $sql . "FOR VALUES FROM ({$from}) TO ({$to})";
     }
 
     /**
@@ -488,9 +493,11 @@ class PostgresPartitionBuilder
      */
     private function buildListSubPartitionSql(string $tableName, string $parentTable, array $subPartition): string
     {
-        $sql = "CREATE TABLE IF NOT EXISTS {$tableName} PARTITION OF {$parentTable} ";
+        $quotedTable = self::quoteIdentifier($tableName);
+        $quotedParent = self::quoteIdentifier($parentTable);
+        $sql = "CREATE TABLE IF NOT EXISTS {$quotedTable} PARTITION OF {$quotedParent} ";
         $values = array_map(
-            static fn (mixed $v): string|int => is_numeric($v) ? $v : "'{$v}'",
+            static fn (mixed $v): string => self::formatSqlValue($v),
             $subPartition['values']
         );
 
@@ -509,14 +516,18 @@ class PostgresPartitionBuilder
         $schema = $this->defaultPartition->getSchema() ?? $this->schemaManager->getDefault();
 
         if ($schema !== null) {
-            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$schema}");
+            $quotedSchema = self::quoteIdentifier($schema);
+            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$quotedSchema}");
             $partitionTable = $schema . '.' . $partitionTable;
         }
 
-        $sql = "CREATE TABLE IF NOT EXISTS {$partitionTable} PARTITION OF {$this->table} DEFAULT";
+        $quotedPartitionTable = self::quoteIdentifier($partitionTable);
+        $quotedMainTable = self::quoteIdentifier($this->table);
+        $sql = "CREATE TABLE IF NOT EXISTS {$quotedPartitionTable} PARTITION OF {$quotedMainTable} DEFAULT";
 
         if ($this->tablespace !== null) {
-            $sql .= " TABLESPACE {$this->tablespace}";
+            $quotedTablespace = self::quoteIdentifier($this->tablespace);
+            $sql .= " TABLESPACE {$quotedTablespace}";
         }
 
         $connection->statement($sql);
@@ -529,17 +540,22 @@ class PostgresPartitionBuilder
         }
 
         $commands = $this->blueprint->getCommands();
+        $quotedTable = self::quoteIdentifier($this->table);
 
         foreach ($commands as $command) {
             if (in_array($command->name, ['index', 'unique'], true)) {
                 $indexName = $command->index ?? $this->table . '_' . implode('_', $command->columns) . '_index';
-                $columns = implode(', ', $command->columns);
+                $quotedIndexName = self::quoteIdentifier($indexName);
+                $quotedColumns = implode(', ', array_map(
+                    static fn (string $col): string => self::quoteIdentifier($col),
+                    $command->columns
+                ));
 
                 $sql = "CREATE ";
                 if ($command->name === 'unique') {
                     $sql .= "UNIQUE ";
                 }
-                $sql .= "INDEX IF NOT EXISTS {$indexName} ON {$this->table} ({$columns})";
+                $sql .= "INDEX IF NOT EXISTS {$quotedIndexName} ON {$quotedTable} ({$quotedColumns})";
 
                 $connection->statement($sql);
             }
@@ -548,8 +564,11 @@ class PostgresPartitionBuilder
 
     protected function addCheckConstraints(Connection $connection): void
     {
+        $quotedTable = self::quoteIdentifier($this->table);
+
         foreach ($this->checkConstraints as $name => $expression) {
-            $sql = "ALTER TABLE {$this->table} ADD CONSTRAINT {$name} CHECK ({$expression})";
+            $quotedName = self::quoteIdentifier($name);
+            $sql = "ALTER TABLE {$quotedTable} ADD CONSTRAINT {$quotedName} CHECK ({$expression})";
             $connection->statement($sql);
         }
     }
@@ -557,10 +576,12 @@ class PostgresPartitionBuilder
     public function attachPartition(string $tableName, string $partitionName, mixed $from, mixed $to): self
     {
         $connection = $this->getConnection();
+        $fromValue = self::formatSqlValue($from);
+        $toValue = self::formatSqlValue($to);
 
-        $sql = is_numeric($from)
-            ? "ALTER TABLE {$this->table} ATTACH PARTITION {$tableName} FOR VALUES FROM ({$from}) TO ({$to})"
-            : "ALTER TABLE {$this->table} ATTACH PARTITION {$tableName} FOR VALUES FROM ('{$from}') TO ('{$to}')";
+        $quotedTable = self::quoteIdentifier($this->table);
+        $quotedPartition = self::quoteIdentifier($tableName);
+        $sql = "ALTER TABLE {$quotedTable} ATTACH PARTITION {$quotedPartition} FOR VALUES FROM ({$fromValue}) TO ({$toValue})";
 
         $connection->statement($sql);
 
@@ -572,7 +593,9 @@ class PostgresPartitionBuilder
         $connection = $this->getConnection();
         $useConcurrently = $concurrently ?? $this->detachConcurrently;
 
-        $sql = "ALTER TABLE {$this->table} DETACH PARTITION {$partitionName}";
+        $quotedTable = self::quoteIdentifier($this->table);
+        $quotedPartition = self::quoteIdentifier($partitionName);
+        $sql = "ALTER TABLE {$quotedTable} DETACH PARTITION {$quotedPartition}";
 
         if ($useConcurrently) {
             $sql .= " CONCURRENTLY";
@@ -586,7 +609,8 @@ class PostgresPartitionBuilder
     public function dropPartition(string $partitionName): self
     {
         $connection = $this->getConnection();
-        $connection->statement("DROP TABLE IF EXISTS {$partitionName} CASCADE");
+        $quotedPartition = self::quoteIdentifier($partitionName);
+        $connection->statement("DROP TABLE IF EXISTS {$quotedPartition} CASCADE");
 
         if (config('partition-manager.defaults.vacuum_after_drop', true)) {
             $this->vacuum();
@@ -597,14 +621,16 @@ class PostgresPartitionBuilder
 
     public function analyze(): self
     {
-        $this->getConnection()->statement("ANALYZE {$this->table}");
+        $quotedTable = self::quoteIdentifier($this->table);
+        $this->getConnection()->statement("ANALYZE {$quotedTable}");
 
         return $this;
     }
 
     public function vacuum(bool $full = false): self
     {
-        $sql = $full ? "VACUUM FULL {$this->table}" : "VACUUM {$this->table}";
+        $quotedTable = self::quoteIdentifier($this->table);
+        $sql = $full ? "VACUUM FULL {$quotedTable}" : "VACUUM {$quotedTable}";
         $this->getConnection()->statement($sql);
 
         return $this;
@@ -615,5 +641,45 @@ class PostgresPartitionBuilder
         return $this->connectionName !== null
             ? DB::connection($this->connectionName)
             : DB::connection();
+    }
+
+    private static function formatSqlValue(mixed $value): string
+    {
+        // Handle arrays for multi-column partitioning
+        if (is_array($value)) {
+            return implode(', ', array_map(
+                static fn (mixed $v): string => self::formatSqlValue($v),
+                $value
+            ));
+        }
+
+        // Handle PostgreSQL partition bound keywords (must be unquoted)
+        if ($value === 'MINVALUE' || $value === 'MAXVALUE') {
+            return $value;
+        }
+
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+
+        if (is_numeric($value)) {
+            return (string) $value;
+        }
+
+        return "'" . $value . "'";
+    }
+
+    private static function quoteIdentifier(string $identifier): string
+    {
+        // Handle schema.table format
+        if (str_contains($identifier, '.')) {
+            $parts = explode('.', $identifier);
+            return implode('.', array_map(
+                static fn (string $part): string => '"' . str_replace('"', '""', $part) . '"',
+                $parts
+            ));
+        }
+
+        return '"' . str_replace('"', '""', $identifier) . '"';
     }
 }

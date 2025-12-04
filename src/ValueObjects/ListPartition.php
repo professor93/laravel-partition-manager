@@ -37,7 +37,7 @@ class ListPartition extends PartitionDefinition
     public function toSql(): string
     {
         $valueList = implode(', ', array_map(
-            static fn (mixed $value): string|int => is_numeric($value) ? $value : "'{$value}'",
+            static fn (mixed $value): string => self::formatSqlValue($value),
             $this->values
         ));
 
@@ -48,5 +48,18 @@ class ListPartition extends PartitionDefinition
         }
 
         return $sql;
+    }
+
+    private static function formatSqlValue(mixed $value): string
+    {
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+
+        if (is_numeric($value)) {
+            return (string) $value;
+        }
+
+        return "'" . $value . "'";
     }
 }

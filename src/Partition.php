@@ -26,7 +26,8 @@ class Partition
 
     public static function dropIfExists(string $table): void
     {
-        DB::statement("DROP TABLE IF EXISTS {$table} CASCADE");
+        $quotedTable = self::quoteIdentifier($table);
+        DB::statement("DROP TABLE IF EXISTS {$quotedTable} CASCADE");
     }
 
     public static function partitionExists(string $table, string $partitionName): bool
@@ -99,5 +100,19 @@ class Partition
     public static function quarterly(string $table, string $column, int $count = 8): void
     {
         QuickPartitionBuilder::table($table)->by($column)->quarterly($count);
+    }
+
+    private static function quoteIdentifier(string $identifier): string
+    {
+        // Handle schema.table format
+        if (str_contains($identifier, '.')) {
+            $parts = explode('.', $identifier);
+            return implode('.', array_map(
+                static fn (string $part): string => '"' . str_replace('"', '""', $part) . '"',
+                $parts
+            ));
+        }
+
+        return '"' . str_replace('"', '""', $identifier) . '"';
     }
 }

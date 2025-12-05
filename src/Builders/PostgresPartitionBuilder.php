@@ -8,21 +8,24 @@ use Exception;
 use Uzbek\LaravelPartitionManager\Enums\PartitionType;
 use Uzbek\LaravelPartitionManager\Exceptions\PartitionException;
 use Uzbek\LaravelPartitionManager\Services\PartitionSchemaManager;
+use Uzbek\LaravelPartitionManager\Services\SchemaCreator;
+use Uzbek\LaravelPartitionManager\Traits\BuilderHelper;
+use Uzbek\LaravelPartitionManager\Traits\SqlHelper;
 use Uzbek\LaravelPartitionManager\ValueObjects\HashPartition;
 use Uzbek\LaravelPartitionManager\ValueObjects\ListPartition;
 use Uzbek\LaravelPartitionManager\ValueObjects\PartitionDefinition;
 use Uzbek\LaravelPartitionManager\ValueObjects\RangePartition;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\DB;
 
 class PostgresPartitionBuilder
 {
+    use SqlHelper;
+    use BuilderHelper;
+
     protected ?Blueprint $blueprint = null;
 
     protected ?\Closure $tableCallback = null;
-
-    protected ?string $connectionName = null;
 
     protected PartitionType $partitionType = PartitionType::RANGE;
 
@@ -99,9 +102,12 @@ class PostgresPartitionBuilder
     }
 
     /**
-     * @param string|array<int, string> $columns
+     * Set the partition column(s).
+     *
+     * @param string|array<int, string> $columns Single column name or array of column names
+     * @return self
      */
-    public function partitionBy(string|array $columns): self
+    public function by(string|array $columns): self
     {
         $this->partitionColumn = is_array($columns)
             ? implode(', ', $columns)
@@ -199,32 +205,140 @@ class PostgresPartitionBuilder
         return $this;
     }
 
-    public function generateMonthlyPartitions(): self
+    /**
+     * Create the partitioned table with monthly partitions.
+     *
+     * This is a terminal operation that creates the table immediately.
+     * Automatically sets partition type to RANGE.
+     *
+     * @param int $count Number of monthly partitions to create
+     * @param string|null $startDate Start date (defaults to first day of current month)
+     * @return void
+     * @throws PartitionException If partition column is not set
+     */
+    public function monthly(int $count = 12, ?string $startDate = null): void
     {
-        return $this->generatePartitions(DateRangeBuilder::monthly());
+        $this->ensurePartitionColumnSet();
+        $this->partitionType = PartitionType::RANGE;
+
+        $builder = DateRangeBuilder::monthly()->count($count);
+        if ($startDate !== null) {
+            $builder->from($startDate);
+        }
+
+        $this->dateRange($builder);
+        $this->generate();
     }
 
-    public function generateYearlyPartitions(): self
+    /**
+     * Create the partitioned table with yearly partitions.
+     *
+     * This is a terminal operation that creates the table immediately.
+     * Automatically sets partition type to RANGE.
+     *
+     * @param int $count Number of yearly partitions to create
+     * @param int|null $startYear Start year (defaults to current year)
+     * @return void
+     * @throws PartitionException If partition column is not set
+     */
+    public function yearly(int $count = 5, ?int $startYear = null): void
     {
-        return $this->generatePartitions(DateRangeBuilder::yearly());
+        $this->ensurePartitionColumnSet();
+        $this->partitionType = PartitionType::RANGE;
+
+        $builder = DateRangeBuilder::yearly()->count($count);
+        if ($startYear !== null) {
+            $builder->from("{$startYear}-01-01");
+        }
+
+        $this->dateRange($builder);
+        $this->generate();
     }
 
-    public function generateDailyPartitions(): self
+    /**
+     * Create the partitioned table with daily partitions.
+     *
+     * This is a terminal operation that creates the table immediately.
+     * Automatically sets partition type to RANGE.
+     *
+     * @param int $count Number of daily partitions to create
+     * @param string|null $startDate Start date (defaults to today)
+     * @return void
+     * @throws PartitionException If partition column is not set
+     */
+    public function daily(int $count = 30, ?string $startDate = null): void
     {
-        return $this->generatePartitions(DateRangeBuilder::daily());
+        $this->ensurePartitionColumnSet();
+        $this->partitionType = PartitionType::RANGE;
+
+        $builder = DateRangeBuilder::daily()->count($count);
+        if ($startDate !== null) {
+            $builder->from($startDate);
+        }
+
+        $this->dateRange($builder);
+        $this->generate();
     }
 
-    public function generateWeeklyPartitions(): self
+    /**
+     * Create the partitioned table with weekly partitions.
+     *
+     * This is a terminal operation that creates the table immediately.
+     * Automatically sets partition type to RANGE.
+     *
+     * @param int $count Number of weekly partitions to create
+     * @param string|null $startDate Start date (defaults to Monday of current week)
+     * @return void
+     * @throws PartitionException If partition column is not set
+     */
+    public function weekly(int $count = 12, ?string $startDate = null): void
     {
-        return $this->generatePartitions(DateRangeBuilder::weekly());
+        $this->ensurePartitionColumnSet();
+        $this->partitionType = PartitionType::RANGE;
+
+        $builder = DateRangeBuilder::weekly()->count($count);
+        if ($startDate !== null) {
+            $builder->from($startDate);
+        }
+
+        $this->dateRange($builder);
+        $this->generate();
     }
 
-    public function generateQuarterlyPartitions(): self
+    /**
+     * Create the partitioned table with quarterly partitions.
+     *
+     * This is a terminal operation that creates the table immediately.
+     * Automatically sets partition type to RANGE.
+     *
+     * @param int $count Number of quarterly partitions to create
+     * @param int|null $startYear Start year (defaults to current year)
+     * @return void
+     * @throws PartitionException If partition column is not set
+     */
+    public function quarterly(int $count = 8, ?int $startYear = null): void
     {
-        return $this->generatePartitions(DateRangeBuilder::quarterly());
+        $this->ensurePartitionColumnSet();
+        $this->partitionType = PartitionType::RANGE;
+
+        $builder = DateRangeBuilder::quarterly()->count($count);
+        if ($startYear !== null) {
+            $builder->from("{$startYear}-01-01");
+        }
+
+        $this->dateRange($builder);
+        $this->generate();
     }
 
-    public function generatePartitions(DateRangeBuilder $builder): self
+    /**
+     * Add partitions from a DateRangeBuilder.
+     *
+     * Use this for advanced date range configurations. Requires calling generate() afterward.
+     *
+     * @param DateRangeBuilder $builder The date range builder
+     * @return self
+     */
+    public function dateRange(DateRangeBuilder $builder): self
     {
         $partitions = $builder->build($this->table . '_');
 
@@ -233,11 +347,6 @@ class PostgresPartitionBuilder
         }
 
         return $this;
-    }
-
-    public function withDateRange(DateRangeBuilder $builder): self
-    {
-        return $this->generatePartitions($builder);
     }
 
     public function hashPartitions(int $count, string $prefix = ''): self
@@ -266,14 +375,27 @@ class PostgresPartitionBuilder
         return $this;
     }
 
-    public function partitionSchema(string $schema): self
+    /**
+     * Set the default schema for all partitions.
+     *
+     * @param string $schema The schema name
+     * @return self
+     */
+    public function schema(string $schema): self
     {
         $this->schemaManager->setDefault($schema);
 
         return $this;
     }
 
-    public function registerSchema(string $partitionType, string $schema): self
+    /**
+     * Register a schema for a specific partition type.
+     *
+     * @param string $partitionType The partition type ('monthly', 'yearly', etc.)
+     * @param string $schema The schema name
+     * @return self
+     */
+    public function schemaFor(string $partitionType, string $schema): self
     {
         $this->schemaManager->register($partitionType, $schema);
 
@@ -281,9 +403,12 @@ class PostgresPartitionBuilder
     }
 
     /**
-     * @param array<string, string> $schemas
+     * Register schemas for multiple partition types.
+     *
+     * @param array<string, string> $schemas Map of partition type to schema name
+     * @return self
      */
-    public function registerSchemas(array $schemas): self
+    public function schemasFor(array $schemas): self
     {
         $this->schemaManager->registerMultiple($schemas);
 
@@ -311,7 +436,15 @@ class PostgresPartitionBuilder
         return $this;
     }
 
-    public function create(): void
+    /**
+     * Generate (create) the partitioned table with all configured partitions.
+     *
+     * This executes the table creation in a transaction.
+     *
+     * @return void
+     * @throws PartitionException If table creation fails
+     */
+    public function generate(): void
     {
         $connection = $this->getConnection();
 
@@ -345,11 +478,6 @@ class PostgresPartitionBuilder
         }
     }
 
-    public function execute(): void
-    {
-        $this->create();
-    }
-
     protected function createPartitionedTable(Connection $connection): void
     {
         if ($this->blueprint === null && $this->tableCallback !== null) {
@@ -366,7 +494,7 @@ class PostgresPartitionBuilder
 
         if ($this->partitionColumn === null) {
             throw new PartitionException(
-                "Partition column not specified. Use partitionBy() to set the partition column."
+                "Partition column not specified. Use by() to set the partition column."
             );
         }
 
@@ -405,12 +533,7 @@ class PostgresPartitionBuilder
         }
 
         $schema = $partition->getSchema() ?? $this->schemaManager->getDefault();
-
-        if ($schema !== null) {
-            $quotedSchema = self::quoteIdentifier($schema);
-            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$quotedSchema}");
-            $partitionTable = $schema . '.' . $partitionTable;
-        }
+        $partitionTable = SchemaCreator::ensureAndPrefix($partitionTable, $schema, $connection);
 
         $quotedPartitionTable = self::quoteIdentifier($partitionTable);
         $quotedMainTable = self::quoteIdentifier($this->table);
@@ -453,12 +576,8 @@ class PostgresPartitionBuilder
     protected function createSubPartition(Connection $connection, string $parentTable, array $subPartition): void
     {
         $subPartitionTable = $subPartition['name'];
-
-        if (!empty($subPartition['schema'])) {
-            $quotedSchema = self::quoteIdentifier($subPartition['schema']);
-            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$quotedSchema}");
-            $subPartitionTable = $subPartition['schema'] . '.' . $subPartitionTable;
-        }
+        $schema = $subPartition['schema'] ?? null;
+        $subPartitionTable = SchemaCreator::ensureAndPrefix($subPartitionTable, $schema, $connection);
 
         $sql = match ($subPartition['type']) {
             'RANGE' => $this->buildRangeSubPartitionSql($subPartitionTable, $parentTable, $subPartition),
@@ -514,12 +633,7 @@ class PostgresPartitionBuilder
         $partitionTable = $this->table . $separator . $this->defaultPartition->getName();
 
         $schema = $this->defaultPartition->getSchema() ?? $this->schemaManager->getDefault();
-
-        if ($schema !== null) {
-            $quotedSchema = self::quoteIdentifier($schema);
-            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$quotedSchema}");
-            $partitionTable = $schema . '.' . $partitionTable;
-        }
+        $partitionTable = SchemaCreator::ensureAndPrefix($partitionTable, $schema, $connection);
 
         $quotedPartitionTable = self::quoteIdentifier($partitionTable);
         $quotedMainTable = self::quoteIdentifier($this->table);
@@ -634,52 +748,5 @@ class PostgresPartitionBuilder
         $this->getConnection()->statement($sql);
 
         return $this;
-    }
-
-    private function getConnection(): Connection
-    {
-        return $this->connectionName !== null
-            ? DB::connection($this->connectionName)
-            : DB::connection();
-    }
-
-    private static function formatSqlValue(mixed $value): string
-    {
-        // Handle arrays for multi-column partitioning
-        if (is_array($value)) {
-            return implode(', ', array_map(
-                static fn (mixed $v): string => self::formatSqlValue($v),
-                $value
-            ));
-        }
-
-        // Handle PostgreSQL partition bound keywords (must be unquoted)
-        if ($value === 'MINVALUE' || $value === 'MAXVALUE') {
-            return $value;
-        }
-
-        if (is_bool($value)) {
-            return $value ? 'true' : 'false';
-        }
-
-        if (is_numeric($value)) {
-            return (string) $value;
-        }
-
-        return "'" . $value . "'";
-    }
-
-    private static function quoteIdentifier(string $identifier): string
-    {
-        // Handle schema.table format
-        if (str_contains($identifier, '.')) {
-            $parts = explode('.', $identifier);
-            return implode('.', array_map(
-                static fn (string $part): string => '"' . str_replace('"', '""', $part) . '"',
-                $parts
-            ));
-        }
-
-        return '"' . str_replace('"', '""', $identifier) . '"';
     }
 }

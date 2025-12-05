@@ -11,40 +11,22 @@ A powerful Laravel package for managing PostgreSQL partitioned tables. Supports 
 ## Table of Contents
 
 - [Installation](#installation)
-- [Basic Usage](#basic-usage)
+- [Quick Start](#quick-start)
+- [Features](#features)
 - [Partition Types](#partition-types)
   - [Range Partitioning](#range-partitioning)
   - [List Partitioning](#list-partitioning)
   - [Hash Partitioning](#hash-partitioning)
 - [Automatic Partition Generation](#automatic-partition-generation)
-  - [Using DateRangeBuilder](#using-daterangebuilder)
-  - [Quick Generation Methods](#quick-generation-methods)
+  - [Terminal Methods](#terminal-methods)
+  - [Quick Generation for Existing Tables](#quick-generation-for-existing-tables)
+  - [DateRangeBuilder](#daterangebuilder)
 - [Schema Management](#schema-management)
-  - [Per-Partition Schemas](#per-partition-schemas)
-  - [Schema Registration](#schema-registration)
-  - [PartitionSchemaManager Service](#partitionschemamanager-service)
 - [Sub-Partitioning](#sub-partitioning)
-  - [Multi-Level Partitioning](#multi-level-partitioning)
-  - [Using Value Objects](#using-value-objects-for-complex-structures)
 - [Partition Management](#partition-management)
-  - [Runtime Operations](#runtime-operations)
-  - [Table Operations](#table-operations)
-  - [Partition Queries and Statistics](#partition-queries-and-statistics)
 - [Advanced Features](#advanced-features)
-  - [Default Partitions](#default-partitions)
-  - [Check Constraints](#check-constraints)
-  - [Partition Pruning](#partition-pruning)
-  - [Custom Tablespaces](#custom-tablespaces)
-  - [Custom Partition Expressions](#custom-partition-expressions)
-  - [Multi-Column Partitioning](#multi-column-partitioning)
 - [Configuration](#configuration)
-- [Static Helper Methods](#static-helper-methods)
-- [Using Facades](#using-facades)
 - [API Reference](#api-reference)
-  - [Enums](#enums)
-  - [Value Objects](#value-objects)
-  - [Builders](#builders)
-  - [Services](#services)
 - [License](#license)
 
 ## Installation
@@ -55,68 +37,75 @@ Install the package via Composer:
 composer require uzbek/laravel-partition-manager
 ```
 
-## Basic Usage
+Optionally publish the configuration:
 
-Create a partitioned table using the fluent interface. The package automatically handles partition creation and management.
+```bash
+php artisan vendor:publish --tag=partition-manager-config
+```
+
+## Quick Start
 
 ```php
 use Uzbek\LaravelPartitionManager\Partition;
 
+// Create a partitioned table with 12 monthly partitions
 Partition::create('logs', function($table) {
     $table->id();
-    $table->string('type');
-    $table->jsonb('data');
+    $table->string('level');
+    $table->text('message');
     $table->timestamp('created_at');
-    $table->index('created_at');
 })
-->range()
-->partitionByMonth('created_at')
-->generateMonthlyPartitions()
-->create();
-```
+->by('created_at')
+->monthly();
 
-**Note:** The schema definition callback uses Laravel's `Blueprint` class, giving you access to all standard Laravel column types and index methods. All operations are wrapped in database transactions for safety - if any partition fails to create, the entire operation is rolled back.
-
-### Quick Partition Generation (Existing Tables)
-
-For existing tables, you can quickly add partitions without defining the schema:
-
-```php
-// One-liner partition generation
-Partition::monthly('orders', 'created_at', 12);  // 12 monthly partitions
-Partition::yearly('reports', 'year', 5);         // 5 yearly partitions
-Partition::daily('logs', 'log_date', 30);        // 30 daily partitions
-
-// Or use the builder for more control
-Partition::generate('events')
+// Add partitions to an existing table
+Partition::for('events')
     ->by('created_at')
-    ->schema('event_partitions')
-    ->monthly(24);  // 24 monthly partitions
+    ->daily(30);
 ```
+
+## Features
+
+- **Three Partitioning Strategies**: RANGE, LIST, and HASH partitioning
+- **Automatic Partition Generation**: Monthly, yearly, daily, weekly, quarterly partitions
+- **Multi-Level Sub-Partitioning**: Create hierarchical partition structures
+- **Schema Management**: Per-partition schema assignment with auto-creation
+- **Transaction Safety**: All operations wrapped in transactions with automatic rollback
+- **Partition Lifecycle Management**: Attach, detach, drop, analyze, vacuum operations
+- **Advanced Options**: Default partitions, check constraints, custom tablespaces, partition pruning
+- **Multi-Column Partitioning**: Partition by multiple columns or custom expressions
 
 ## Partition Types
 
 ### Range Partitioning
 
-Divide data based on ranges of values, commonly used for date-based partitioning.
+Divide data based on ranges of values, ideal for date-based partitioning.
 
 ```php
-// By date
+// Simple syntax with terminal method
 Partition::create('orders', function($table) {
     $table->id();
     $table->decimal('amount');
     $table->date('order_date');
 })
-->range()
-->partitionBy('order_date')
+->by('order_date')
+->monthly(24, '2024-01-01');  // 24 partitions from Jan 2024
+
+// Manual partition definition
+Partition::create('orders', function($table) {
+    $table->id();
+    $table->decimal('amount');
+    $table->date('order_date');
+})
+->by('order_date')
 ->addRangePartition('orders_2024_q1', '2024-01-01', '2024-04-01')
 ->addRangePartition('orders_2024_q2', '2024-04-01', '2024-07-01')
-->create();
+->generate();  // Required when using addRangePartition()
 ```
 
 ### List Partitioning
 
-Partition data based on discrete values, perfect for categorizing by specific attributes.
+Partition data based on discrete values.
 
 ```php
 Partition::create('users', function($table) {
@@ -125,16 +114,16 @@ Partition::create('users', function($table) {
     $table->string('email');
 })
 ->list()
-->partitionBy('country')
+->by('country')
 ->addListPartition('users_us', ['US', 'CA'])
 ->addListPartition('users_eu', ['DE', 'FR', 'IT', 'ES'])
 ->addListPartition('users_asia', ['JP', 'CN', 'KR'])
-->create();
+->generate();
 ```
 
 ### Hash Partitioning
 
-Distribute data evenly across partitions using a hash function, ideal for load balancing.
+Distribute data evenly across partitions using a hash function.
 
 ```php
 Partition::create('events', function($table) {
@@ -143,16 +132,66 @@ Partition::create('events', function($table) {
     $table->jsonb('payload');
 })
 ->hash()
-->partitionBy('id')
-->hashPartitions(4) // Creates 4 hash partitions
-->create();
+->by('id')
+->hashPartitions(4)
+->generate();
 ```
 
 ## Automatic Partition Generation
 
-### Using DateRangeBuilder
+### Terminal Methods
 
-Create date-based partitions with flexible configuration using the DateRangeBuilder class.
+Terminal methods create the table and partitions immediately (no `generate()` call needed):
+
+```php
+Partition::create('logs', function($table) { /* ... */ })
+->by('created_at')
+->monthly();           // 12 monthly partitions from current month
+->monthly(24);         // 24 monthly partitions
+->monthly(12, '2024-01-01');  // From specific date
+
+->yearly();            // 5 yearly partitions from current year
+->yearly(10, 2020);    // 10 partitions starting from 2020
+
+->daily();             // 30 daily partitions from today
+->daily(7, '2024-01-01');
+
+->weekly();            // 12 weekly partitions
+->quarterly();         // 8 quarterly partitions
+```
+
+### Quick Generation for Existing Tables
+
+```php
+// One-liner methods
+Partition::monthly('logs', 'created_at', 12);
+Partition::yearly('reports', 'year', 5);
+Partition::daily('metrics', 'recorded_at', 30);
+Partition::weekly('events', 'event_date', 12);
+Partition::quarterly('sales', 'sale_date', 8);
+
+// Using the builder for more control
+Partition::for('logs')
+    ->by('created_at')
+    ->schema('log_partitions')
+    ->monthly(24);
+
+// List partitions
+Partition::for('regions')
+    ->byList('country', [
+        'us' => ['US', 'CA'],
+        'eu' => ['DE', 'FR', 'ES'],
+        'asia' => ['JP', 'CN', 'KR']
+    ]);
+
+// Hash partitions
+Partition::for('users')
+    ->byHash('id', 8);
+```
+
+### DateRangeBuilder
+
+For advanced date range configurations:
 
 ```php
 use Uzbek\LaravelPartitionManager\Builders\DateRangeBuilder;
@@ -162,132 +201,70 @@ Partition::create('metrics', function($table) {
     $table->float('value');
     $table->timestamp('recorded_at');
 })
-->range()
-->partitionByDay('recorded_at')
-->withDateRange(
+->by('recorded_at')
+->dateRange(
     DateRangeBuilder::daily()
         ->from('2024-01-01')
         ->count(30)
         ->defaultSchema('daily_metrics')
 )
-->create();
-```
-
-### Quick Generation Methods
-
-Use convenient methods to automatically generate common partition patterns without manual configuration.
-
-```php
-// For new tables (with schema definition)
-->generateMonthlyPartitions()  // 12 monthly partitions from current date
-->generateYearlyPartitions()   // 5 yearly partitions from current year
-->generateWeeklyPartitions()   // 12 weekly partitions from current week
-->generateDailyPartitions()    // 30 daily partitions from today
-->generateQuarterlyPartitions() // 8 quarterly partitions from current quarter
-
-// Quick static methods for existing tables
-Partition::monthly('logs', 'created_at', 12);  // 12 monthly partitions
-Partition::yearly('reports', 'year', 5);       // 5 yearly partitions
-Partition::daily('logs', 'log_date', 30);      // 30 daily partitions
-Partition::weekly('events', 'event_date', 12); // 12 weekly partitions
-Partition::quarterly('metrics', 'quarter', 8); // 8 quarterly partitions
-
-// Or use the builder for more control
-Partition::generate('logs')
-    ->by('created_at')
-    ->monthly(12);  // Generate 12 monthly partitions
-
-Partition::generate('metrics')
-    ->by('recorded_at')
-    ->schema('metric_partitions')  // Optional schema
-    ->daily(7);  // Generate 7 daily partitions
-
-// List partitions for existing tables
-Partition::generate('regions')
-    ->byList('country', [
-        'us' => ['US', 'CA'],
-        'eu' => ['DE', 'FR', 'ES'],
-        'asia' => ['JP', 'CN', 'KR']
-    ]);
-
-// Hash partitions for existing tables
-Partition::generate('users')
-    ->byHash('id', 8);  // 8 hash partitions
+->generate();
 ```
 
 ## Schema Management
 
 ### Per-Partition Schemas
 
-Organize partitions into different PostgreSQL schemas for better data organization and access control. Schemas are automatically created if they don't exist.
-
 ```php
-Partition::create('logs', function($table) {
-    $table->id();
-    $table->string('level');
-    $table->text('message');
-    $table->timestamp('logged_at');
-})
-->range()
-->partitionByMonth('logged_at')
-->partitionSchema('log_partitions') // Default schema for all partitions
-->addRangePartition('logs_2024_01', '2024-01-01', '2024-02-01', 'archive_logs')
-->addRangePartition('logs_2024_02', '2024-02-01', '2024-03-01', 'current_logs')
-->create();
+// Default schema for all partitions
+Partition::create('logs', function($table) { /* ... */ })
+->by('logged_at')
+->schema('log_partitions')
+->monthly();
+
+// Different schemas per partition
+Partition::create('logs', function($table) { /* ... */ })
+->by('logged_at')
+->addRangePartition('logs_archive', '2023-01-01', '2024-01-01', 'archive_schema')
+->addRangePartition('logs_current', '2024-01-01', '2025-01-01', 'current_schema')
+->generate();
 ```
 
-**Note:** PostgreSQL schemas will be automatically created if they don't exist when the partitions are created.
-
-### Schema Registration
-
-Register multiple schemas for different partition types to automatically organize related partitions.
+### SchemaCreator Service
 
 ```php
-->registerSchemas([
-    'error' => 'error_log_schema',
-    'info' => 'info_log_schema',
-    'debug' => 'debug_log_schema'
-])
+use Uzbek\LaravelPartitionManager\Services\SchemaCreator;
+
+// Ensure schema exists
+SchemaCreator::ensure('my_schema');
+SchemaCreator::ensure('my_schema', $connection);
+
+// Ensure schema and return prefixed table name
+$fullName = SchemaCreator::ensureAndPrefix('my_table', 'my_schema');
+// Returns: 'my_schema.my_table'
 ```
 
 ### PartitionSchemaManager Service
-
-Use the dedicated schema management service for advanced schema handling and organization.
 
 ```php
 use Uzbek\LaravelPartitionManager\Services\PartitionSchemaManager;
 
 $schemaManager = new PartitionSchemaManager();
 
-// Set default schema for all partitions
 $schemaManager->setDefault('default_partitions');
-
-// Register schemas for specific partition types
-$schemaManager->register('error', 'error_log_schema')
-              ->register('info', 'info_log_schema')
-              ->register('debug', 'debug_log_schema');
-
-// Register multiple schemas at once
+$schemaManager->register('error', 'error_log_schema');
 $schemaManager->registerMultiple([
-    'active' => 'active_data_schema',
+    'active' => 'active_schema',
     'archived' => 'archive_schema'
 ]);
 
-// Query schema configurations
-$errorSchema = $schemaManager->getSchemaFor('error');
+$schema = $schemaManager->getSchemaFor('error');
 $hasSchema = $schemaManager->hasSchemaFor('info');
-$defaultSchema = $schemaManager->getDefault();
-$allSchemas = $schemaManager->getAllSchemas();
-
-// Clear all schema mappings
-$schemaManager->clear();
 ```
 
 ## Sub-Partitioning
 
-### Multi-Level Partitioning
-
-Create hierarchical partition structures with sub-partitions for complex data organization needs.
+Create hierarchical partition structures:
 
 ```php
 use Uzbek\LaravelPartitionManager\Builders\SubPartitionBuilder;
@@ -295,23 +272,19 @@ use Uzbek\LaravelPartitionManager\Builders\SubPartitionBuilder;
 Partition::create('events', function($table) {
     $table->id();
     $table->string('type');
-    $table->boolean('processed');
     $table->timestamp('created_at');
 })
-->range()
-->partitionByMonth('created_at')
+->by('created_at')
 ->addRangePartition('events_2024_01', '2024-01-01', '2024-02-01')
-->withSubPartitions('events_2024_01', 
+->withSubPartitions('events_2024_01',
     SubPartitionBuilder::list('type')
-        ->addListPartition('events_2024_01_user', ['login', 'logout', 'signup'])
-        ->addListPartition('events_2024_01_system', ['error', 'warning', 'info'])
+        ->addListPartition('events_2024_01_user', ['login', 'logout'])
+        ->addListPartition('events_2024_01_system', ['error', 'warning'])
 )
-->create();
+->generate();
 ```
 
-### Using Value Objects for Complex Structures
-
-Build complex partition hierarchies using type-safe value objects for better code organization.
+### Using Value Objects
 
 ```php
 use Uzbek\LaravelPartitionManager\ValueObjects\RangePartition;
@@ -322,12 +295,9 @@ $partition = RangePartition::range('data_2024_01')
     ->withSchema('monthly_data')
     ->withSubPartitions(
         SubPartitionBuilder::list('status')
-            ->add(ListSubPartition::create('data_2024_01_active')
+            ->add(ListSubPartition::create('data_active')
                 ->withValues(['active', 'pending'])
                 ->withSchema('active_data'))
-            ->add(ListSubPartition::create('data_2024_01_archived')
-                ->withValues(['completed', 'cancelled'])
-                ->withSchema('archive_data'))
     );
 
 $builder->addPartition($partition);
@@ -337,204 +307,151 @@ $builder->addPartition($partition);
 
 ### Runtime Operations
 
-Manage partitions dynamically at runtime with the PartitionManager service.
-
 ```php
 use Uzbek\LaravelPartitionManager\Services\PartitionManager;
 
 $manager = app(PartitionManager::class);
 
-// List all partitions for a table
+// List all partitions
 $partitions = $manager->getPartitions('logs');
 
-// Get partition sizes and statistics
-$sizes = $manager->getPartitionSizes('logs');
+// Get partition details
+$info = $manager->getPartitionInfo('logs', 'logs_2024_01');
 
-// Drop partitions older than specified date
+// Get partition strategy
+$strategy = $manager->getPartitionStrategy('logs');
+// Returns: PartitionType::RANGE, LIST, or HASH
+
+// Check if table is partitioned
+if ($manager->isPartitioned('logs')) { /* ... */ }
+
+// Get statistics
+$size = $manager->getTableSize('logs');
+$count = $manager->getPartitionCount('logs');
+$oldest = $manager->getOldestPartition('logs');
+$newest = $manager->getNewestPartition('logs');
+
+// Drop old partitions
 $dropped = $manager->dropOldPartitions('logs', new DateTime('-6 months'));
 
-// Check if a specific partition exists
-if ($manager->partitionExists('logs', 'logs_2024_01')) {
-    // Partition exists
-}
+// Maintenance
+$manager->analyzePartition('logs_2024_01');
+$manager->vacuumPartition('logs_2024_01', full: true);
 ```
 
 ### Table Operations
 
-Perform maintenance and management operations on partitioned tables.
-
 ```php
+use Uzbek\LaravelPartitionManager\Builders\PostgresPartitionBuilder;
+
 $builder = new PostgresPartitionBuilder('orders');
 
-// Attach an existing table as a partition
+// Attach existing table as partition
 $builder->attachPartition('old_orders', 'orders_2023', '2023-01-01', '2024-01-01');
 
-// Detach a partition (with optional CONCURRENTLY)
-$builder->detachPartition('orders_2023', true);
+// Detach partition (optionally with CONCURRENTLY)
+$builder->detachPartition('orders_2023', concurrently: true);
 
-// Drop a specific partition
+// Drop partition
 $builder->dropPartition('orders_2023');
 
-// Maintenance operations
-$builder->analyze();        // Update table statistics
-$builder->vacuum();         // Reclaim storage
-$builder->vacuum(true);     // VACUUM FULL for complete rebuild
+// Maintenance
+$builder->analyze();
+$builder->vacuum();
+$builder->vacuum(full: true);
 ```
 
-### Partition Queries and Statistics
-
-Query detailed partition information, statistics, and metadata at runtime.
+### Using Facades
 
 ```php
-use Uzbek\LaravelPartitionManager\Services\PartitionManager;
+use Uzbek\LaravelPartitionManager\Facades\PartitionManager;
 
-$manager = app(PartitionManager::class);
-
-// Get detailed partition information
-$partitionInfo = $manager->getPartitionInfo('logs', 'logs_2024_01');
-// Returns: object with size, row_count, schema, tablespace
-
-// Get partition strategy/type
-$strategy = $manager->getPartitionStrategy('logs');
-// Returns: 'RANGE', 'LIST', or 'HASH'
-
-// Get partition columns and their data types
-$columns = $manager->getPartitionColumns('logs');
-// Returns: [['column' => 'created_at', 'data_type' => 'timestamp without time zone']]
-
-// Get total table size
-$tableSize = $manager->getTableSize('logs');
-// Returns: Human-readable size like '2456 MB'
-
-// Count total partitions
-$count = $manager->getPartitionCount('logs');
-
-// Get oldest and newest partitions
-$oldestPartition = $manager->getOldestPartition('logs');
-$newestPartition = $manager->getNewestPartition('logs');
-
-// Maintenance operations on specific partitions
-$manager->analyzePartition('logs_2024_01');
-$manager->vacuumPartition('logs_2024_01');
-$manager->vacuumPartition('logs_2024_01', true); // VACUUM FULL
+$partitions = PartitionManager::getPartitions('logs');
+$isPartitioned = PartitionManager::isPartitioned('logs');
+$strategy = PartitionManager::getPartitionStrategy('logs');
 ```
 
 ## Advanced Features
 
 ### Default Partitions
 
-Create a default partition to catch rows that don't match any defined partition criteria.
+Catch rows that don't match any defined partition:
 
 ```php
-->withDefaultPartition('others') // Catches unmatched rows
+->withDefaultPartition('others')
 ```
 
 ### Check Constraints
 
-Add check constraints to ensure data integrity across all partitions.
-
 ```php
 ->check('positive_amount', 'amount > 0')
-->check('valid_status', "status IN ('pending', 'completed', 'cancelled')")
+->check('valid_status', "status IN ('pending', 'completed')")
 ```
 
 ### Partition Pruning
 
-Control query optimization settings for better performance.
-
 ```php
-->enablePartitionPruning() // Enable query optimization (default: true)
-->detachConcurrently()     // Use CONCURRENTLY for non-blocking operations
+->enablePartitionPruning()      // Enable query optimization
+->detachConcurrently()          // Non-blocking detach operations
 ```
 
 ### Custom Tablespaces
 
-Assign partitions to specific tablespaces for storage optimization.
-
 ```php
 ->tablespace('fast_ssd')
-->addRangePartition('hot_data', '2024-01-01', '2024-02-01')
 ```
 
 ### Custom Partition Expressions
 
-Define custom SQL expressions for partition keys when built-in methods are not sufficient.
-
 ```php
-// Custom expression for complex date operations
-Partition::create('events', function($table) {
-    $table->id();
-    $table->timestamp('event_time');
-    $table->string('timezone');
-})
-->range()
 ->partitionByExpression("DATE_TRUNC('week', event_time AT TIME ZONE timezone)")
-->addRangePartition('events_week_1', '2024-01-01', '2024-01-08')
-->create();
-
-// Extract specific date parts
-->partitionByExpression("EXTRACT(YEAR FROM order_date)")
-->addRangePartition('orders_2024', 2024, 2025)
-
-// Custom calculations
-->partitionByExpression("(amount / 100)::int")
-->addRangePartition('tier_1', 0, 10)
+->partitionByYear('order_date')
+->partitionByMonth('created_at')
+->partitionByDay('logged_at')
 ```
 
 ### Multi-Column Partitioning
 
-Partition tables using multiple columns for more granular data organization.
-
 ```php
-// Partition by multiple columns (composite key)
 Partition::create('sales', function($table) {
     $table->id();
     $table->string('region');
     $table->integer('year');
     $table->decimal('amount');
 })
-->range()
-->partitionBy(['region', 'year'])  // Array of columns
+->by(['region', 'year'])
 ->addRangePartition('sales_us_2024', ['US', 2024], ['US', 2025])
-->addRangePartition('sales_eu_2024', ['EU', 2024], ['EU', 2025])
-->create();
-
-// Combine columns with expressions
-->partitionBy(['country', 'DATE_TRUNC(\'month\', created_at)'])
+->generate();
 ```
 
 ## Configuration
 
-Publish and customize the configuration file to set default behaviors.
-
-```bash
-php artisan vendor:publish --tag=partition-manager-config
-```
-
 ```php
 // config/partition-manager.php
 return [
-    // Default database connection to use (defaults to Laravel's default)
     'default_connection' => env('DB_CONNECTION', 'pgsql'),
 
-    // Default behaviors for partition operations
     'defaults' => [
-        'enable_partition_pruning' => true,  // Enable query optimization
-        'detach_concurrently' => true,       // Use CONCURRENTLY for detach (PostgreSQL 14+)
-        'analyze_after_create' => true,      // Auto-analyze after creation
-        'vacuum_after_drop' => true,         // Auto-vacuum after drop
+        'enable_partition_pruning' => true,
+        'detach_concurrently' => true,
+        'analyze_after_create' => true,
+        'vacuum_after_drop' => true,
     ],
 
-    // Partition naming conventions
     'naming' => [
-        'prefix' => '',           // Prefix for partition names
-        'suffix' => '',           // Suffix for partition names
-        'separator' => '_',       // Separator in partition names
-        'date_format' => 'Y_m',   // PHP date format for monthly partitions
-        'day_format' => 'Y_m_d',  // PHP date format for daily partitions
+        'prefix' => '',
+        'suffix' => '',
+        'separator' => '_',
+        'date_format' => 'Y_m',
+        'day_format' => 'Y_m_d',
     ],
 
-    // Logging configuration
+    'schemas' => [
+        'auto_create' => [],
+        'default' => null,
+        'mappings' => [],
+    ],
+
     'logging' => [
         'enabled' => env('PARTITION_LOGGING', true),
         'channel' => env('PARTITION_LOG_CHANNEL', 'daily'),
@@ -542,309 +459,86 @@ return [
 ];
 ```
 
-## Static Helper Methods
-
-Utility methods for quick partition operations and checks.
-
-```php
-use Uzbek\LaravelPartitionManager\Partition;
-
-// Create partitioned table with schema definition
-$builder = Partition::create('logs', function($table) {
-    $table->id();
-    $table->text('message');
-    $table->timestamp('created_at');
-});
-
-// Alternative alias for create()
-$builder = Partition::table('events', function($table) {
-    // Define schema...
-});
-
-// Quick partition generation for existing tables
-Partition::generate('logs')
-    ->by('created_at')
-    ->monthly(12);
-
-// One-liner partition generation methods
-Partition::monthly('orders', 'created_at', 12);    // 12 monthly partitions
-Partition::yearly('reports', 'year', 5);           // 5 yearly partitions
-Partition::daily('logs', 'log_date', 30);          // 30 daily partitions
-Partition::weekly('events', 'event_date', 12);     // 12 weekly partitions
-Partition::quarterly('metrics', 'quarter', 8);     // 8 quarterly partitions
-
-// Check if a table is partitioned
-if (Partition::isPartitioned('logs')) {
-    // Table is partitioned
-}
-
-// Get list of all partitions with metadata
-$partitions = Partition::getPartitions('logs');
-// Returns array of partition objects with names, bounds, sizes, row counts
-
-// Check if a specific partition exists
-if (Partition::partitionExists('logs', 'logs_2024_01')) {
-    // Partition exists
-}
-
-// Drop a table and all its partitions (CASCADE)
-Partition::dropIfExists('logs');
-```
-
-## Using Facades
-
-Access the PartitionManager service using Laravel facades for cleaner dependency injection-free code.
-
-```php
-use Uzbek\LaravelPartitionManager\Facades\PartitionManager;
-
-// All PartitionManager methods are available as static calls
-$partitions = PartitionManager::getPartitions('logs');
-$isPartitioned = PartitionManager::isPartitioned('logs');
-$strategy = PartitionManager::getPartitionStrategy('logs');
-$count = PartitionManager::getPartitionCount('logs');
-
-// Drop old partitions
-$dropped = PartitionManager::dropOldPartitions('logs', new DateTime('-6 months'));
-
-// Maintenance operations
-PartitionManager::analyzePartition('logs_2024_01');
-PartitionManager::vacuumPartition('logs_2024_01', true);
-```
-
-Alternatively, use dependency injection or the service container:
-
-```php
-use Uzbek\LaravelPartitionManager\Services\PartitionManager;
-
-// Via dependency injection (recommended)
-public function __construct(private PartitionManager $partitionManager)
-{
-    // Use $this->partitionManager...
-}
-
-// Via service container
-$manager = app(PartitionManager::class);
-// Or
-$manager = app('partition-manager');
-```
-
 ## API Reference
 
-### Enums
+### Partition (Static Helper)
 
-#### PartitionType
+```php
+Partition::create(string $table, Closure $callback): PostgresPartitionBuilder
+Partition::for(string $table): QuickPartitionBuilder
+
+// Quick generation
+Partition::monthly(string $table, string $column, int $count = 12): void
+Partition::yearly(string $table, string $column, int $count = 5): void
+Partition::daily(string $table, string $column, int $count = 30): void
+Partition::weekly(string $table, string $column, int $count = 12): void
+Partition::quarterly(string $table, string $column, int $count = 8): void
+
+// Queries
+Partition::isPartitioned(string $table): bool
+Partition::getPartitions(string $table): array
+Partition::partitionExists(string $table, string $partitionName): bool
+Partition::dropIfExists(string $table): void
+```
+
+### PartitionType Enum
 
 ```php
 use Uzbek\LaravelPartitionManager\Enums\PartitionType;
 
-// Available cases
-PartitionType::RANGE  // 'RANGE' - Range-based partitioning
-PartitionType::LIST   // 'LIST'  - List-based partitioning
-PartitionType::HASH   // 'HASH'  - Hash-based partitioning
+PartitionType::RANGE    // 'RANGE'
+PartitionType::LIST     // 'LIST'
+PartitionType::HASH     // 'HASH'
 
 // Helper methods
-$type = PartitionType::RANGE;
-$type->value;      // Returns: 'RANGE'
-$type->isRange();  // Returns: true
-$type->isList();   // Returns: false
-$type->isHash();   // Returns: false
+$type->isRange(): bool
+$type->isList(): bool
+$type->isHash(): bool
 
-// Creating from string
-$type = PartitionType::from('RANGE');  // Returns PartitionType::RANGE
-$type = PartitionType::tryFrom('INVALID');  // Returns null
+// PostgreSQL strategy codes
+PartitionType::PG_STRATEGY_RANGE  // 'r'
+PartitionType::PG_STRATEGY_LIST   // 'l'
+PartitionType::PG_STRATEGY_HASH   // 'h'
+
+// Create from PostgreSQL strategy code
+PartitionType::fromPgStrategy('r')  // Returns PartitionType::RANGE
 ```
 
-### Value Objects
-
-#### PartitionDefinition
-
-Base class for all partition definitions.
+### PostgresPartitionBuilder
 
 ```php
-use Uzbek\LaravelPartitionManager\ValueObjects\PartitionDefinition;
-
-// Static constructors
-PartitionDefinition::list(string $name): static
-PartitionDefinition::range(string $name): static
-PartitionDefinition::hash(string $name): static
-
-// Methods
-->withSchema(string $schema): self           // Set PostgreSQL schema
-->withSubPartitions(SubPartitionBuilder $builder): self  // Add sub-partitions
-->getName(): string                          // Get partition name
-->getType(): PartitionType                   // Get partition type enum
-->getSchema(): ?string                       // Get schema (null if not set)
-->getSubPartitions(): ?SubPartitionBuilder   // Get sub-partition builder
-->hasSubPartitions(): bool                   // Check if has sub-partitions
-```
-
-#### RangePartition
-
-```php
-use Uzbek\LaravelPartitionManager\ValueObjects\RangePartition;
-
-$partition = RangePartition::range('orders_2024_q1')
-    ->withRange('2024-01-01', '2024-04-01')  // mixed $from, mixed $to
-    ->withSchema('sales_data');
-
-// Methods
-->withRange(mixed $from, mixed $to): self   // Set range bounds (dates, numbers, MINVALUE, MAXVALUE)
-->getFrom(): mixed                          // Get lower bound
-->getTo(): mixed                            // Get upper bound
-->toSql(): string                           // Generate SQL partition clause
-```
-
-#### ListPartition
-
-```php
-use Uzbek\LaravelPartitionManager\ValueObjects\ListPartition;
-
-$partition = ListPartition::list('users_eu')
-    ->withValues(['DE', 'FR', 'IT', 'ES'])
-    ->withSchema('regional_data');
-
-// Methods
-->withValues(array $values): self      // Set all values at once
-->withValue(mixed $value): self        // Add single value
-->getValues(): array                   // Get all values
-->toSql(): string                      // Generate SQL partition clause
-```
-
-#### HashPartition
-
-```php
-use Uzbek\LaravelPartitionManager\ValueObjects\HashPartition;
-
-$partition = HashPartition::hash('events_part_0')
-    ->withHash(4, 0)  // modulus=4, remainder=0
-    ->withSchema('event_data');
-
-// Methods
-->withHash(int $modulus, int $remainder): self  // Set hash parameters
-->getModulus(): int                              // Get modulus value
-->getRemainder(): int                            // Get remainder value
-->toSql(): string                                // Generate SQL partition clause
-```
-
-#### SubPartition (Abstract)
-
-Base class for sub-partition definitions.
-
-```php
-use Uzbek\LaravelPartitionManager\ValueObjects\SubPartition;
-
-// Common methods for all sub-partitions
-->withSchema(string $schema): self        // Set PostgreSQL schema
-->withTablespace(string $tablespace): self  // Set tablespace
-->getName(): string                        // Get partition name
-->getSchema(): ?string                     // Get schema
-->getTablespace(): ?string                 // Get tablespace
-->toArray(): array                         // Convert to array representation
-```
-
-#### RangeSubPartition
-
-```php
-use Uzbek\LaravelPartitionManager\ValueObjects\RangeSubPartition;
-
-$subPartition = RangeSubPartition::create('data_2024_01_week1')
-    ->withRange('2024-01-01', '2024-01-08')
-    ->withSchema('weekly_data')
-    ->withTablespace('fast_ssd');
-
-// Methods
-->withRange(mixed $from, mixed $to): self  // Set range bounds
-->getFrom(): mixed                          // Get lower bound
-->getTo(): mixed                            // Get upper bound
-->toArray(): array                          // Returns ['type' => 'RANGE', 'name' => ..., 'from' => ..., 'to' => ..., 'schema' => ..., 'tablespace' => ...]
-```
-
-#### ListSubPartition
-
-```php
-use Uzbek\LaravelPartitionManager\ValueObjects\ListSubPartition;
-
-$subPartition = ListSubPartition::create('events_user')
-    ->withValues(['login', 'logout', 'signup'])
-    ->withSchema('user_events');
-
-// Methods
-->withValues(array $values): self   // Set all values
-->withValue(mixed $value): self     // Add single value
-->getValues(): array                // Get all values
-->toArray(): array                  // Returns ['type' => 'LIST', 'name' => ..., 'values' => [...], 'schema' => ..., 'tablespace' => ...]
-```
-
-#### HashSubPartition
-
-```php
-use Uzbek\LaravelPartitionManager\ValueObjects\HashSubPartition;
-
-$subPartition = HashSubPartition::create('data_hash_0')
-    ->withHash(8, 0)
-    ->withTablespace('distributed_storage');
-
-// Methods
-->withHash(int $modulus, int $remainder): self  // Set hash parameters
-->getModulus(): int                              // Get modulus
-->getRemainder(): int                            // Get remainder
-->toArray(): array                               // Returns ['type' => 'HASH', 'name' => ..., 'modulus' => ..., 'remainder' => ..., 'schema' => ..., 'tablespace' => ...]
-```
-
-### Builders
-
-#### PostgresPartitionBuilder
-
-Main builder for creating partitioned tables.
-
-```php
-use Uzbek\LaravelPartitionManager\Builders\PostgresPartitionBuilder;
-
-$builder = new PostgresPartitionBuilder(string $table);
-
 // Configuration
-->setBlueprint(Blueprint $blueprint): self    // Set Laravel blueprint
-->connection(string $connection): self        // Set database connection
-
-// Partition type selection
-->partition(PartitionType|string $type): self // Set partition type
-->range(): self                               // Shorthand for RANGE
-->list(): self                                // Shorthand for LIST
-->hash(): self                                // Shorthand for HASH
-
-// Partition column configuration
-->partitionBy(string|array $columns): self         // Set partition column(s)
-->partitionByExpression(string $expression): self  // Custom SQL expression
-->partitionByYear(string $column): self            // EXTRACT(YEAR FROM column)
-->partitionByMonth(string $column): self           // DATE_TRUNC('month', column)
-->partitionByDay(string $column): self             // DATE_TRUNC('day', column)
+->setBlueprint(Blueprint $blueprint): self
+->connection(string $connection): self
+->partition(PartitionType|string $type): self
+->range(): self
+->list(): self
+->hash(): self
+->by(string|array $columns): self
+->partitionByExpression(string $expression): self
 
 // Adding partitions
 ->addPartition(PartitionDefinition $partition): self
 ->addRangePartition(string $name, mixed $from, mixed $to, ?string $schema = null): self
 ->addListPartition(string $name, array $values, ?string $schema = null): self
 ->addHashPartition(string $name, int $modulus, int $remainder, ?string $schema = null): self
-
-// Automatic generation
-->generateMonthlyPartitions(): self           // 12 monthly partitions
-->generateYearlyPartitions(): self            // 5 yearly partitions
-->generateDailyPartitions(): self             // 30 daily partitions
-->generateWeeklyPartitions(): self            // 12 weekly partitions
-->generateQuarterlyPartitions(): self         // 8 quarterly partitions
-->generatePartitions(DateRangeBuilder $builder): self
-->withDateRange(DateRangeBuilder $builder): self
 ->hashPartitions(int $count, string $prefix = ''): self
+->dateRange(DateRangeBuilder $builder): self
 
-// Sub-partitioning
-->withSubPartitions(string $partitionName, SubPartitionBuilder $builder): self
+// Terminal methods (execute immediately)
+->monthly(int $count = 12, ?string $startDate = null): void
+->yearly(int $count = 5, ?int $startYear = null): void
+->daily(int $count = 30, ?string $startDate = null): void
+->weekly(int $count = 12, ?string $startDate = null): void
+->quarterly(int $count = 8, ?int $startYear = null): void
 
 // Schema management
-->partitionSchema(string $schema): self                     // Default schema
-->registerSchema(string $partitionType, string $schema): self
-->registerSchemas(array $schemas): self                     // ['type' => 'schema']
+->schema(string $schema): self
+->schemaFor(string $partitionType, string $schema): self
+->schemasFor(array $schemas): self
 
 // Advanced options
+->withSubPartitions(string $partitionName, SubPartitionBuilder $builder): self
 ->withDefaultPartition(string $name = 'default'): self
 ->tablespace(string $tablespace): self
 ->check(string $name, string $expression): self
@@ -852,187 +546,120 @@ $builder = new PostgresPartitionBuilder(string $table);
 ->detachConcurrently(bool $enable = true): self
 
 // Execution
-->create(): void                              // Create the partitioned table
-->execute(): void                             // Alias for create()
+->generate(): void
 
 // Runtime operations
 ->attachPartition(string $tableName, string $partitionName, mixed $from, mixed $to): self
 ->detachPartition(string $partitionName, ?bool $concurrently = null): self
 ->dropPartition(string $partitionName): self
-->analyze(): self                             // Run ANALYZE
-->vacuum(bool $full = false): self            // Run VACUUM or VACUUM FULL
+->analyze(): self
+->vacuum(bool $full = false): self
 ```
 
-#### QuickPartitionBuilder
-
-Quick partition generation for existing tables.
+### QuickPartitionBuilder
 
 ```php
-use Uzbek\LaravelPartitionManager\Builders\QuickPartitionBuilder;
+QuickPartitionBuilder::table(string $table): self
 
-$builder = QuickPartitionBuilder::table(string $table);
+->by(string $column): self
+->schema(string $schema): self
+->connection(string $connection): self
 
-// Configuration
-->by(string $column): self             // Set partition column
-->schema(string $schema): self         // Set schema for partitions
-->connection(string $connection): self // Set database connection
-
-// Range partition generation (executes immediately)
+// Range partitions
 ->monthly(int $count = 12, ?string $startDate = null): void
 ->yearly(int $count = 5, ?int $startYear = null): void
 ->daily(int $count = 30, ?string $startDate = null): void
 ->weekly(int $count = 12, ?string $startDate = null): void
 ->quarterly(int $count = 8, ?int $startYear = null): void
 
-// List and hash partitions (executes immediately)
-->byList(string $column, array $partitions): void  // ['name' => ['value1', 'value2']]
+// List and hash
+->byList(string $column, array $partitions): void
 ->byHash(string $column, int $count = 4): void
 ```
 
-#### DateRangeBuilder
-
-Flexible date-based partition generation.
+### DateRangeBuilder
 
 ```php
-use Uzbek\LaravelPartitionManager\Builders\DateRangeBuilder;
-
-// Static constructors
 DateRangeBuilder::monthly(): self
 DateRangeBuilder::yearly(): self
 DateRangeBuilder::daily(): self
 DateRangeBuilder::weekly(): self
 DateRangeBuilder::quarterly(): self
 
-// Configuration
-->from(DateTime|string $date): self        // Start date
-->to(DateTime|string $date): self          // End date (alternative to count)
-->count(int $count): self                  // Number of partitions
-->interval(string $interval): self         // 'daily', 'weekly', 'monthly', 'quarterly', 'yearly'
-->nameFormat(string $format): self         // PHP date format for naming
-->defaultSchema(string $schema): self      // Schema for all generated partitions
-
-// Execution
-->build(string $prefix = ''): array        // Returns array of RangePartition objects
-->generate(?callable $callback = null): array  // Build with optional transformation
+->from(DateTime|string $date): self
+->to(DateTime|string $date): self
+->count(int $count): self
+->interval(string $interval): self
+->nameFormat(string $format): self
+->defaultSchema(string $schema): self
+->build(string $prefix = ''): array
 ```
 
-#### SubPartitionBuilder
-
-Builder for sub-partitions.
+### SubPartitionBuilder
 
 ```php
-use Uzbek\LaravelPartitionManager\Builders\SubPartitionBuilder;
-
-// Static constructors
 SubPartitionBuilder::list(string $column): self
 SubPartitionBuilder::range(string $column): self
 SubPartitionBuilder::hash(string $column): self
 
-// Configuration
 ->defaultSchema(string $schema): self
-
-// Adding sub-partitions
 ->add(SubPartition $partition): self
 ->addListPartition(string $name, array $values, ?string $schema = null): self
 ->addRangePartition(string $name, mixed $from, mixed $to, ?string $schema = null): self
 ->addHashPartition(string $name, int $modulus, int $remainder, ?string $schema = null): self
-
-// Query
-->getPartitions(): array        // Returns array of SubPartition objects
-->toArray(): array              // Returns full structure for SQL generation
 ```
 
-### Services
-
-#### PartitionManager
-
-Runtime partition management service.
+### Value Objects
 
 ```php
-use Uzbek\LaravelPartitionManager\Services\PartitionManager;
+// RangePartition
+RangePartition::range(string $name)
+    ->withRange(mixed $from, mixed $to): self
+    ->withSchema(string $schema): self
+    ->withSubPartitions(SubPartitionBuilder $builder): self
 
-$manager = app(PartitionManager::class);
-// Or via facade: use Uzbek\LaravelPartitionManager\Facades\PartitionManager;
+// ListPartition
+ListPartition::list(string $name)
+    ->withValues(array $values): self
+    ->withValue(mixed $value): self
+    ->withSchema(string $schema): self
 
-// Query partitions
+// HashPartition
+HashPartition::hash(string $name)
+    ->withHash(int $modulus, int $remainder): self
+    ->withSchema(string $schema): self
+
+// Sub-partition value objects
+RangeSubPartition::create(string $name)
+    ->withRange(mixed $from, mixed $to): self
+    ->withSchema(string $schema): self
+    ->withTablespace(string $tablespace): self
+
+ListSubPartition::create(string $name)
+    ->withValues(array $values): self
+
+HashSubPartition::create(string $name)
+    ->withHash(int $modulus, int $remainder): self
+```
+
+### PartitionManager Service
+
+```php
+// Query
 ->getPartitions(string $table, ?string $connection = null): array
-// Returns array of objects with: partition_name, partition_expression, size, row_count
-
 ->getPartitionInfo(string $table, string $partitionName, ?string $connection = null): ?object
-// Returns object with: partition_name, partition_expression, size, row_count, schema_name, tablespace
-
 ->isPartitioned(string $table, ?string $connection = null): bool
-// Check if table is partitioned
-
 ->getPartitionStrategy(string $table, ?string $connection = null): ?PartitionType
-// Returns PartitionType enum (RANGE, LIST, HASH) or null
-
 ->getPartitionColumns(string $table, ?string $connection = null): array
-// Returns array of objects with: column_name, data_type
-
 ->getTableSize(string $table, ?string $connection = null): string
-// Returns human-readable size (e.g., '2456 MB')
-
 ->getPartitionCount(string $table, ?string $connection = null): int
-// Returns number of partitions
-
 ->getOldestPartition(string $table, ?string $connection = null): ?object
 ->getNewestPartition(string $table, ?string $connection = null): ?object
 
 // Maintenance
 ->analyzePartition(string $partitionName, ?string $connection = null): void
 ->vacuumPartition(string $partitionName, bool $full = false, ?string $connection = null): void
-
-// Cleanup
 ->dropOldPartitions(string $table, DateTime $before, ?string $connection = null): array
-// Returns array of dropped partition names
-```
-
-#### PartitionSchemaManager
-
-Schema mapping management.
-
-```php
-use Uzbek\LaravelPartitionManager\Services\PartitionSchemaManager;
-
-$schemaManager = new PartitionSchemaManager();
-
-->setDefault(string $schema): self                      // Set default schema
-->register(string $partitionType, string $schema): self // Register schema for type
-->registerMultiple(array $schemas): self                // ['type' => 'schema']
-->getSchemaFor(string $partitionType): ?string          // Get schema (or default)
-->hasSchemaFor(string $partitionType): bool             // Check if type has schema
-->getDefault(): ?string                                 // Get default schema
-->getAllSchemas(): array                                // Get all mappings
-->clear(): self                                         // Clear all mappings
-```
-
-### Partition Static Helper Class
-
-```php
-use Uzbek\LaravelPartitionManager\Partition;
-
-// Create partitioned table
-Partition::create(string $table, Closure $callback): PostgresPartitionBuilder
-Partition::table(string $table, Closure $callback): PostgresPartitionBuilder  // Alias
-
-// Quick generation builder
-Partition::generate(string $table): QuickPartitionBuilder
-
-// One-liner generation methods
-Partition::monthly(string $table, string $column, int $count = 12): void
-Partition::yearly(string $table, string $column, int $count = 5): void
-Partition::daily(string $table, string $column, int $count = 30): void
-Partition::weekly(string $table, string $column, int $count = 12): void
-Partition::quarterly(string $table, string $column, int $count = 8): void
-
-// Query methods
-Partition::isPartitioned(string $table): bool
-Partition::getPartitions(string $table): array
-Partition::partitionExists(string $table, string $partitionName): bool
-
-// Cleanup
-Partition::dropIfExists(string $table): void  // DROP TABLE ... CASCADE
 ```
 
 ## License

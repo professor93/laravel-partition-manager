@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Uzbek\LaravelPartitionManager\ValueObjects;
 
+use Uzbek\LaravelPartitionManager\Traits\SqlHelper;
+
 class ListPartition extends PartitionDefinition
 {
+    use SqlHelper;
     /** @var array<int, mixed> */
     protected array $values = [];
 
@@ -48,18 +51,5 @@ class ListPartition extends PartitionDefinition
         }
 
         return $sql;
-    }
-
-    private static function formatSqlValue(mixed $value): string
-    {
-        if (is_bool($value)) {
-            return $value ? 'true' : 'false';
-        }
-
-        if (is_numeric($value)) {
-            return (string) $value;
-        }
-
-        return "'" . $value . "'";
     }
 }

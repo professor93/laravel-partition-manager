@@ -8,10 +8,12 @@ use DateTime;
 use Exception;
 use Uzbek\LaravelPartitionManager\Enums\PartitionType;
 use Uzbek\LaravelPartitionManager\Exceptions\PartitionException;
+use Uzbek\LaravelPartitionManager\Traits\SqlHelper;
 use Illuminate\Database\DatabaseManager;
 
 class PartitionManager
 {
+    use SqlHelper;
     public function __construct(
         protected readonly DatabaseManager $db,
     ) {}
@@ -84,12 +86,7 @@ class PartitionManager
             return null;
         }
 
-        return match ($result->partstrat) {
-            'r' => PartitionType::RANGE,
-            'l' => PartitionType::LIST,
-            'h' => PartitionType::HASH,
-            default => null,
-        };
+        return PartitionType::fromPgStrategy($result->partstrat);
     }
 
     /**
@@ -215,19 +212,5 @@ class PartitionManager
     private function resolveConnection(?string $connection): string
     {
         return $connection ?? config('partition-manager.default_connection', 'pgsql');
-    }
-
-    private static function quoteIdentifier(string $identifier): string
-    {
-        // Handle schema.table format
-        if (str_contains($identifier, '.')) {
-            $parts = explode('.', $identifier);
-            return implode('.', array_map(
-                static fn (string $part): string => '"' . str_replace('"', '""', $part) . '"',
-                $parts
-            ));
-        }
-
-        return '"' . str_replace('"', '""', $identifier) . '"';
     }
 }

@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Uzbek\LaravelPartitionManager\ValueObjects;
 
-use DateTime;
+use Uzbek\LaravelPartitionManager\Traits\SqlHelper;
 
 class RangePartition extends PartitionDefinition
 {
+    use SqlHelper;
+
     protected mixed $from = null;
 
     protected mixed $to = null;
@@ -32,8 +34,8 @@ class RangePartition extends PartitionDefinition
 
     public function toSql(): string
     {
-        $fromValue = $this->formatValue($this->from);
-        $toValue = $this->formatValue($this->to);
+        $fromValue = self::formatSqlValue($this->from);
+        $toValue = self::formatSqlValue($this->to);
 
         $sql = "PARTITION {$this->getName()} FOR VALUES FROM ({$fromValue}) TO ({$toValue})";
 
@@ -42,26 +44,5 @@ class RangePartition extends PartitionDefinition
         }
 
         return $sql;
-    }
-
-    private function formatValue(mixed $value): string
-    {
-        if ($value === 'MINVALUE' || $value === 'MAXVALUE') {
-            return $value;
-        }
-
-        if ($value instanceof DateTime) {
-            return "'" . $value->format('Y-m-d') . "'";
-        }
-
-        if (is_bool($value)) {
-            return $value ? 'true' : 'false';
-        }
-
-        if (is_numeric($value)) {
-            return (string) $value;
-        }
-
-        return "'" . $value . "'";
     }
 }

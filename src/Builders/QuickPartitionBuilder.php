@@ -6,17 +6,19 @@ namespace Uzbek\LaravelPartitionManager\Builders;
 
 use DateTime;
 use Uzbek\LaravelPartitionManager\Enums\PartitionType;
-use Uzbek\LaravelPartitionManager\Exceptions\PartitionException;
+use Uzbek\LaravelPartitionManager\Services\SchemaCreator;
+use Uzbek\LaravelPartitionManager\Traits\BuilderHelper;
+use Uzbek\LaravelPartitionManager\Traits\SqlHelper;
 use Illuminate\Database\Connection;
-use Illuminate\Support\Facades\DB;
 
 class QuickPartitionBuilder
 {
+    use SqlHelper;
+    use BuilderHelper;
+
     protected PartitionType $partitionType = PartitionType::RANGE;
 
     protected string $partitionColumn = '';
-
-    protected ?string $connectionName = null;
 
     protected ?string $schema = null;
 
@@ -29,6 +31,12 @@ class QuickPartitionBuilder
         return new self($table);
     }
 
+    /**
+     * Set the partition column.
+     *
+     * @param string $column The column name to partition by
+     * @return self
+     */
     public function by(string $column): self
     {
         $this->partitionColumn = $column;
@@ -36,6 +44,12 @@ class QuickPartitionBuilder
         return $this;
     }
 
+    /**
+     * Set the schema for generated partitions.
+     *
+     * @param string $schema The schema name
+     * @return self
+     */
     public function schema(string $schema): self
     {
         $this->schema = $schema;
@@ -241,12 +255,7 @@ class QuickPartitionBuilder
 
     protected function createRangePartition(Connection $connection, string $name, string $from, string $to): void
     {
-        $fullName = $this->schema !== null ? "{$this->schema}.{$name}" : $name;
-
-        if ($this->schema !== null) {
-            $quotedSchema = self::quoteIdentifier($this->schema);
-            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$quotedSchema}");
-        }
+        $fullName = SchemaCreator::ensureAndPrefix($name, $this->schema, $connection);
 
         $quotedFullName = self::quoteIdentifier($fullName);
         $quotedTable = self::quoteIdentifier($this->table);
@@ -261,12 +270,7 @@ class QuickPartitionBuilder
      */
     protected function createListPartition(Connection $connection, string $name, array $values): void
     {
-        $fullName = $this->schema !== null ? "{$this->schema}.{$name}" : $name;
-
-        if ($this->schema !== null) {
-            $quotedSchema = self::quoteIdentifier($this->schema);
-            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$quotedSchema}");
-        }
+        $fullName = SchemaCreator::ensureAndPrefix($name, $this->schema, $connection);
 
         $valueList = array_map(
             static fn (mixed $v): string => self::formatSqlValue($v),
@@ -283,12 +287,7 @@ class QuickPartitionBuilder
 
     protected function createHashPartition(Connection $connection, string $name, int $modulus, int $remainder): void
     {
-        $fullName = $this->schema !== null ? "{$this->schema}.{$name}" : $name;
-
-        if ($this->schema !== null) {
-            $quotedSchema = self::quoteIdentifier($this->schema);
-            $connection->statement("CREATE SCHEMA IF NOT EXISTS {$quotedSchema}");
-        }
+        $fullName = SchemaCreator::ensureAndPrefix($name, $this->schema, $connection);
 
         $quotedFullName = self::quoteIdentifier($fullName);
         $quotedTable = self::quoteIdentifier($this->table);
@@ -296,59 +295,5 @@ class QuickPartitionBuilder
         $sql .= "FOR VALUES WITH (modulus {$modulus}, remainder {$remainder})";
 
         $connection->statement($sql);
-    }
-
-    private function getConnection(): Connection
-    {
-        return $this->connectionName !== null
-            ? DB::connection($this->connectionName)
-            : DB::connection();
-    }
-
-    private function ensurePartitionColumnSet(): void
-    {
-        if ($this->partitionColumn === '') {
-            throw new PartitionException("Partition column not specified. Use by() method first.");
-        }
-    }
-
-    private static function formatSqlValue(mixed $value): string
-    {
-        // Handle arrays for multi-column partitioning
-        if (is_array($value)) {
-            return implode(', ', array_map(
-                static fn (mixed $v): string => self::formatSqlValue($v),
-                $value
-            ));
-        }
-
-        // Handle PostgreSQL partition bound keywords (must be unquoted)
-        if ($value === 'MINVALUE' || $value === 'MAXVALUE') {
-            return $value;
-        }
-
-        if (is_bool($value)) {
-            return $value ? 'true' : 'false';
-        }
-
-        if (is_numeric($value)) {
-            return (string) $value;
-        }
-
-        return "'" . $value . "'";
-    }
-
-    private static function quoteIdentifier(string $identifier): string
-    {
-        // Handle schema.table format
-        if (str_contains($identifier, '.')) {
-            $parts = explode('.', $identifier);
-            return implode('.', array_map(
-                static fn (string $part): string => '"' . str_replace('"', '""', $part) . '"',
-                $parts
-            ));
-        }
-
-        return '"' . str_replace('"', '""', $identifier) . '"';
     }
 }

@@ -150,4 +150,32 @@ class Partition
 
         DB::statement("ALTER TABLE {$quotedTable} ATTACH PARTITION {$quotedPartition} FOR VALUES FROM ({$fromValue}) TO ({$toValue})");
     }
+
+    /**
+     * Attach a LIST partition.
+     *
+     * @param array<int, mixed> $values
+     */
+    public static function attachListPartition(string $table, string $partitionName, array $values): void
+    {
+        $quotedTable = self::quoteIdentifier($table);
+        $quotedPartition = self::quoteIdentifier($partitionName);
+        $valueList = implode(', ', array_map(
+            static fn (mixed $v): string => self::formatSqlValue($v),
+            $values
+        ));
+
+        DB::statement("ALTER TABLE {$quotedTable} ATTACH PARTITION {$quotedPartition} FOR VALUES IN ({$valueList})");
+    }
+
+    /**
+     * Attach a HASH partition.
+     */
+    public static function attachHashPartition(string $table, string $partitionName, int $modulus, int $remainder): void
+    {
+        $quotedTable = self::quoteIdentifier($table);
+        $quotedPartition = self::quoteIdentifier($partitionName);
+
+        DB::statement("ALTER TABLE {$quotedTable} ATTACH PARTITION {$quotedPartition} FOR VALUES WITH (modulus {$modulus}, remainder {$remainder})");
+    }
 }

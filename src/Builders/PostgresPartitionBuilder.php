@@ -585,6 +585,7 @@ class PostgresPartitionBuilder
         $sql = match ($subPartition['type']) {
             'RANGE' => $this->buildRangeSubPartitionSql($subPartitionTable, $parentTable, $subPartition),
             'LIST' => $this->buildListSubPartitionSql($subPartitionTable, $parentTable, $subPartition),
+            'HASH' => $this->buildHashSubPartitionSql($subPartitionTable, $parentTable, $subPartition),
             default => throw new PartitionException("Unknown sub-partition type: {$subPartition['type']}"),
         };
 
@@ -624,6 +625,18 @@ class PostgresPartitionBuilder
         );
 
         return $sql . "FOR VALUES IN (" . implode(', ', $values) . ")";
+    }
+
+    /**
+     * @param array<string, mixed> $subPartition
+     */
+    private function buildHashSubPartitionSql(string $tableName, string $parentTable, array $subPartition): string
+    {
+        $quotedTable = self::quoteIdentifier($tableName);
+        $quotedParent = self::quoteIdentifier($parentTable);
+        $sql = "CREATE TABLE IF NOT EXISTS {$quotedTable} PARTITION OF {$quotedParent} ";
+
+        return $sql . "FOR VALUES WITH (modulus {$subPartition['modulus']}, remainder {$subPartition['remainder']})";
     }
 
     protected function createDefaultPartition(Connection $connection): void

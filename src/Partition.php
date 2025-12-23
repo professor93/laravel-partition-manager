@@ -77,12 +77,58 @@ class Partition
      * Drop a table if it exists (with CASCADE).
      *
      * @param string $table The table name to drop
+     * @param bool $withSchema Also drop empty schemas used by partitions
      * @return void
      */
-    public static function dropIfExists(string $table): void
+    public static function dropIfExists(string $table, bool $withSchema = false): void
     {
+        $schemas = [];
+        if ($withSchema) {
+            foreach (self::getPartitions($table) as $partition) {
+                $name = $partition->partition_name;
+                if (str_contains($name, '.')) {
+                    $schemas[explode('.', $name, 2)[0]] = true;
+                }
+            }
+        }
+
         $quotedTable = self::quoteIdentifier($table);
         DB::statement("DROP TABLE IF EXISTS {$quotedTable} CASCADE");
+
+        foreach (array_keys($schemas) as $schema) {
+            self::dropSchemaIfEmpty($schema);
+        }
+    }
+
+    /**
+     * Drop a schema if it is empty.
+     *
+     * @param string $schema The schema name to drop
+     * @return void
+     */
+    public static function dropSchemaIfEmpty(string $schema): void
+    {
+        $result = DB::select("
+            SELECT COUNT(*) as count
+            FROM pg_tables
+            WHERE schemaname = ?
+        ", [$schema]);
+
+        if (($result[0]->count ?? 0) === 0) {
+            self::dropSchemaIfExists($schema);
+        }
+    }
+
+    /**
+     * Drop a schema if it exists (with CASCADE).
+     *
+     * @param string $schema The schema name to drop
+     * @return void
+     */
+    public static function dropSchemaIfExists(string $schema): void
+    {
+        $quotedSchema = self::quoteIdentifier($schema);
+        DB::statement("DROP SCHEMA IF EXISTS {$quotedSchema} CASCADE");
     }
 
     /**

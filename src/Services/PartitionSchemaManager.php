@@ -38,7 +38,7 @@ class PartitionSchemaManager
      */
     public function loadFromConfig(): self
     {
-        $this->defaultSchema = SchemaCreator::getDefault();
+        $this->defaultSchema = config('partition-manager.schemas.default');
 
         $mappings = config('partition-manager.schemas.mappings', []);
         if (is_array($mappings)) {

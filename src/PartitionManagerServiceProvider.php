@@ -52,6 +52,13 @@ class PartitionManagerServiceProvider extends ServiceProvider
 
             DB::statement("DO $$ BEGIN CREATE TYPE {$quotedType} AS ENUM ({$quotedValues}); EXCEPTION WHEN duplicate_object THEN null; END $$");
 
+            // Register the custom type with the grammar so it can compile columns of this type
+            $grammar = DB::connection()->getSchemaGrammar();
+            $methodName = 'type' . ucfirst($type);
+            if ($grammar !== null && !method_exists($grammar, $methodName)) {
+                $grammar::macro($methodName, fn (): string => $quotedType);
+            }
+
             return $this->addColumn($type, $column);
         });
     }

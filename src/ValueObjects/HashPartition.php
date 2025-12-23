@@ -30,12 +30,6 @@ class HashPartition extends PartitionDefinition
 
     public function toSql(): string
     {
-        $sql = "PARTITION {$this->getName()} FOR VALUES WITH (modulus {$this->modulus}, remainder {$this->remainder})";
-
-        if ($this->schema !== null) {
-            $sql .= " TABLESPACE {$this->schema}";
-        }
-
-        return $sql;
+        return "PARTITION {$this->getName()} FOR VALUES WITH (modulus {$this->modulus}, remainder {$this->remainder})";
     }
 }

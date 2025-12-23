@@ -37,12 +37,6 @@ class RangePartition extends PartitionDefinition
         $fromValue = self::formatSqlValue($this->from);
         $toValue = self::formatSqlValue($this->to);
 
-        $sql = "PARTITION {$this->getName()} FOR VALUES FROM ({$fromValue}) TO ({$toValue})";
-
-        if ($this->schema !== null) {
-            $sql .= " TABLESPACE {$this->schema}";
-        }
-
-        return $sql;
+        return "PARTITION {$this->getName()} FOR VALUES FROM ({$fromValue}) TO ({$toValue})";
     }
 }

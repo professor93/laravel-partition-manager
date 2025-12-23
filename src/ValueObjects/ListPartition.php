@@ -9,12 +9,11 @@ use Uzbek\LaravelPartitionManager\Traits\SqlHelper;
 class ListPartition extends PartitionDefinition
 {
     use SqlHelper;
+
     /** @var array<int, mixed> */
     protected array $values = [];
 
-    /**
-     * @param array<int, mixed> $values
-     */
+    /** @param array<int, mixed> $values */
     public function withValues(array $values): self
     {
         $this->values = $values;
@@ -29,9 +28,7 @@ class ListPartition extends PartitionDefinition
         return $this;
     }
 
-    /**
-     * @return array<int, mixed>
-     */
+    /** @return array<int, mixed> */
     public function getValues(): array
     {
         return $this->values;
@@ -44,12 +41,6 @@ class ListPartition extends PartitionDefinition
             $this->values
         ));
 
-        $sql = "PARTITION {$this->getName()} FOR VALUES IN ({$valueList})";
-
-        if ($this->schema !== null) {
-            $sql .= " TABLESPACE {$this->schema}";
-        }
-
-        return $sql;
+        return "PARTITION {$this->getName()} FOR VALUES IN ({$valueList})";
     }
 }

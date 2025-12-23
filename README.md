@@ -26,6 +26,7 @@ A powerful Laravel package for managing PostgreSQL partitioned tables. Supports 
 - [Partition Management](#partition-management)
 - [Advanced Features](#advanced-features)
 - [Configuration](#configuration)
+- [Service Classes](#service-classes)
 - [API Reference](#api-reference)
 - [License](#license)
 
@@ -457,6 +458,211 @@ return [
         'channel' => env('PARTITION_LOG_CHANNEL', 'daily'),
     ],
 ];
+```
+
+## Service Classes
+
+The package provides standalone service classes for specific partition operations:
+
+### PartitionStats
+
+Get statistics and health information about partitions:
+
+```php
+use Uzbek\LaravelPartitionManager\Services\PartitionStats;
+
+// Get partition statistics (row count, size)
+$stats = PartitionStats::get('orders');
+// Returns: partition_name, row_count, size_bytes, size_pretty
+
+// Get partition boundaries
+$boundaries = PartitionStats::boundaries('orders');
+// Returns: partition_name, partition_type, from_value, to_value
+
+// Estimate row counts
+$rowCount = PartitionStats::estimateRowCount('orders');
+$totalRows = PartitionStats::estimateTotalRowCount('orders');
+
+// Health check
+$health = PartitionStats::healthCheck('orders');
+// Returns: gaps, overlaps, missing_indexes, orphan_data
+
+// Find specific issues
+$gaps = PartitionStats::findGaps('orders');
+$overlaps = PartitionStats::findOverlaps('orders');
+$missingIndexes = PartitionStats::findMissingIndexes('orders');
+
+// Analyze query pruning
+$pruning = PartitionStats::explainPruning(
+    "SELECT * FROM orders WHERE created_at >= '2024-01-01'"
+);
+// Returns: partitions_scanned, total_partitions, pruning_effective, plan
+
+// Tree visualization
+$tree = PartitionStats::getTree('orders');
+echo PartitionStats::printTree('orders');
+// Output:
+// orders
+// ├── orders_2024_01 [2024-01-01 → 2024-02-01]
+// ├── orders_2024_02 [2024-02-01 → 2024-03-01]
+// └── orders_2024_03 [2024-03-01 → 2024-04-01]
+```
+
+### PartitionMaintenance
+
+Perform maintenance operations on partitions:
+
+```php
+use Uzbek\LaravelPartitionManager\Services\PartitionMaintenance;
+
+// Vacuum partition (reclaim storage)
+PartitionMaintenance::vacuum('orders_2024_01');
+PartitionMaintenance::vacuumFull('orders_2024_01');
+
+// Analyze partition (update statistics)
+PartitionMaintenance::analyze('orders_2024_01');
+
+// Reindex partition
+PartitionMaintenance::reindex('orders_2024_01');
+
+// Rebalance hash partitions (parallel capable)
+PartitionMaintenance::rebalanceHash('events');
+
+// Dry run mode - returns SQL without executing
+$sql = PartitionMaintenance::dryRun()->vacuum('orders_2024_01');
+
+// Parallel maintenance on all partitions
+PartitionMaintenance::parallel('orders', 'vacuum');
+PartitionMaintenance::parallel('orders', 'analyze');
+```
+
+### PartitionConsolidator
+
+Merge multiple partitions into larger ones:
+
+```php
+use Uzbek\LaravelPartitionManager\Services\PartitionConsolidator;
+
+// Merge specific partitions
+PartitionConsolidator::merge(
+    'orders',
+    ['orders_2024_01', 'orders_2024_02', 'orders_2024_03'],
+    'orders_2024_q1',
+    '2024-01-01',
+    '2024-04-01'
+);
+
+// Consolidate monthly partitions into yearly
+PartitionConsolidator::monthlyToYearly('orders', 2024, 'orders_m');
+
+// Consolidate daily partitions into weekly
+PartitionConsolidator::dailyToWeekly('logs', '2024-01-01', 'logs_d');
+
+// Consolidate daily partitions into monthly
+PartitionConsolidator::dailyToMonthly('logs', 2024, 1, 'logs_d');
+
+// Consolidate weekly partitions into monthly
+PartitionConsolidator::weeklyToMonthly('events', 2024, 1, 'events_w');
+
+// Merge all partitions within a date range
+PartitionConsolidator::range(
+    'orders',
+    '2024-01-01',
+    '2024-07-01',
+    'orders_2024_h1'
+);
+```
+
+### PartitionSplitter
+
+Split partitions into smaller granularity:
+
+```php
+use Uzbek\LaravelPartitionManager\Services\PartitionSplitter;
+
+// Split yearly partition into monthly
+PartitionSplitter::yearlyToMonthly('orders', 'orders_y2024', 2024);
+
+// Split yearly partition into weekly
+PartitionSplitter::yearlyToWeekly('events', 'events_y2024', 2024);
+
+// Split monthly partition into daily
+PartitionSplitter::monthlyToDaily('logs', 'logs_m2024_01', 2024, 1);
+
+// Split monthly partition into weekly
+PartitionSplitter::monthlyToWeekly('events', 'events_m2024_01', 2024, 1);
+
+// Custom split with specific ranges
+PartitionSplitter::custom('orders', 'orders_q1', [
+    'orders_jan' => ['from' => '2024-01-01', 'to' => '2024-02-01'],
+    'orders_feb' => ['from' => '2024-02-01', 'to' => '2024-03-01'],
+    'orders_mar' => ['from' => '2024-03-01', 'to' => '2024-04-01'],
+]);
+```
+
+### PartitionRotation
+
+Manage partition lifecycle with rotation policies:
+
+```php
+use Uzbek\LaravelPartitionManager\Services\PartitionRotation;
+
+// Ensure future partitions exist
+PartitionRotation::ensureFuture('orders', 'created_at', 3, 'monthly');
+
+// Rotate old partitions (drop older than threshold)
+$dropped = PartitionRotation::rotate('logs', new DateTime('-6 months'));
+
+// Add monthly partitions for an entire year
+PartitionRotation::addMonthlyForYear('orders', 2025, 'created_at');
+```
+
+### PartitionIndex
+
+Manage indexes on partitions:
+
+```php
+use Uzbek\LaravelPartitionManager\Services\PartitionIndex;
+
+// Create index on partition
+PartitionIndex::create('orders_2024_01', 'idx_orders_customer', ['customer_id']);
+
+// Create unique index
+PartitionIndex::create('orders_2024_01', 'idx_orders_ref', ['reference'], unique: true);
+
+// Create index with specific method (btree, hash, gist, gin, brin)
+PartitionIndex::create('logs_2024_01', 'idx_logs_message', ['message'], method: 'gin');
+
+// Create index concurrently (non-blocking)
+PartitionIndex::createConcurrently('orders_2024_01', 'idx_customer', ['customer_id']);
+
+// Drop index
+PartitionIndex::drop('idx_orders_customer');
+PartitionIndex::drop('idx_orders_customer', cascade: true);
+PartitionIndex::dropConcurrently('idx_orders_customer');
+
+// List indexes on partition
+$indexes = PartitionIndex::list('orders_2024_01');
+```
+
+### PartitionExport
+
+Export partition data to files:
+
+```php
+use Uzbek\LaravelPartitionManager\Services\PartitionExport;
+
+// Export to SQL file
+PartitionExport::toSql('orders_2024_01', '/backup/orders_2024_01.sql');
+
+// Export to compressed SQL
+PartitionExport::toCompressedSql('orders_2024_01', '/backup/orders_2024_01.sql.gz');
+
+// Export to CSV
+PartitionExport::toCsv('orders_2024_01', '/backup/orders_2024_01.csv');
+
+// Get export command (without executing)
+$command = PartitionExport::getExportCommand('orders_2024_01', '/backup/orders.sql');
 ```
 
 ## API Reference

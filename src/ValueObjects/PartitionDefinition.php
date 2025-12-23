@@ -4,14 +4,14 @@ declare(strict_types=1);
 
 namespace Uzbek\LaravelPartitionManager\ValueObjects;
 
-use Uzbek\LaravelPartitionManager\Builders\SubPartitionBuilder;
+use Uzbek\LaravelPartitionManager\Builders\AbstractSubPartitionBuilder;
 use Uzbek\LaravelPartitionManager\Enums\PartitionType;
 
 class PartitionDefinition
 {
     protected ?string $schema = null;
 
-    protected ?SubPartitionBuilder $subPartitions = null;
+    protected ?AbstractSubPartitionBuilder $subPartitions = null;
 
     private function __construct(
         protected readonly string $name,
@@ -40,7 +40,7 @@ class PartitionDefinition
         return $this;
     }
 
-    public function withSubPartitions(SubPartitionBuilder $builder): self
+    public function withSubPartitions(AbstractSubPartitionBuilder $builder): self
     {
         $this->subPartitions = $builder;
 
@@ -62,7 +62,7 @@ class PartitionDefinition
         return $this->schema;
     }
 
-    public function getSubPartitions(): ?SubPartitionBuilder
+    public function getSubPartitions(): ?AbstractSubPartitionBuilder
     {
         return $this->subPartitions;
     }

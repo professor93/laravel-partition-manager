@@ -193,7 +193,7 @@ class PostgresPartitionBuilder
         return $this;
     }
 
-    public function withSubPartitions(string $partitionName, SubPartitionBuilder $builder): self
+    public function withSubPartitions(string $partitionName, AbstractSubPartitionBuilder $builder): self
     {
         foreach ($this->partitions as $partition) {
             if ($partition->getName() === $partitionName) {
@@ -340,7 +340,8 @@ class PostgresPartitionBuilder
      */
     public function dateRange(DateRangeBuilder $builder): self
     {
-        $partitions = $builder->build($this->table . '_');
+        // Pass existing partitions so builder can continue from last one if no start date set
+        $partitions = $builder->continueFrom($this->partitions)->build($this->table . '_');
 
         foreach ($partitions as $partition) {
             $this->addPartition($partition);
@@ -554,7 +555,8 @@ class PostgresPartitionBuilder
         }
 
         if ($partition->hasSubPartitions()) {
-            $subPartitions = $partition->getSubPartitions()?->toArray() ?? [];
+            $parentSchema = $schema ?? $this->schemaManager->getDefault();
+            $subPartitions = $partition->getSubPartitions()?->toArray($parentSchema) ?? [];
             $subPartitionType = strtoupper($subPartitions['partition_by']['type']);
             $subPartitionColumn = self::quoteIdentifier($subPartitions['partition_by']['column']);
             $sql .= " PARTITION BY {$subPartitionType} ({$subPartitionColumn})";
@@ -563,9 +565,10 @@ class PostgresPartitionBuilder
         $connection->statement($sql);
 
         if ($partition->hasSubPartitions()) {
-            $subPartitions = $partition->getSubPartitions()?->toArray() ?? [];
+            $parentSchema = $schema ?? $this->schemaManager->getDefault();
+            $subPartitions = $partition->getSubPartitions()?->toArray($parentSchema) ?? [];
             foreach ($subPartitions['partitions'] as $subPartition) {
-                $this->createSubPartition($connection, $partitionTable, $subPartition);
+                $this->createSubPartition($connection, $partitionTable, $subPartition, $parentSchema);
             }
         }
     }
@@ -573,10 +576,10 @@ class PostgresPartitionBuilder
     /**
      * @param array<string, mixed> $subPartition
      */
-    protected function createSubPartition(Connection $connection, string $parentTable, array $subPartition): void
+    protected function createSubPartition(Connection $connection, string $parentTable, array $subPartition, ?string $parentSchema = null): void
     {
         $subPartitionTable = $subPartition['name'];
-        $schema = $subPartition['schema'] ?? null;
+        $schema = $subPartition['schema'] ?? $parentSchema ?? $this->schemaManager->getDefault();
         $subPartitionTable = SchemaCreator::ensureAndPrefix($subPartitionTable, $schema, $connection);
 
         $sql = match ($subPartition['type']) {

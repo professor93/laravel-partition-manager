@@ -14,11 +14,6 @@ use Uzbek\LaravelPartitionManager\Services\PartitionManager;
 
 class PartitionManagerServiceProvider extends ServiceProvider
 {
-    /**
-     * Indicates if loading of the provider is deferred.
-     */
-    public bool $defer = true;
-
     public function register(): void
     {
         $this->mergeConfigFrom(
@@ -50,7 +45,10 @@ class PartitionManagerServiceProvider extends ServiceProvider
             /** @var Blueprint $this */
             $type = $type ?? Str::singular($this->getTable()) . '_' . $column . '_enum';
             $quotedType = '"' . str_replace('"', '""', $type) . '"';
-            $quotedValues = implode(', ', array_map(fn ($v) => "'" . str_replace("'", "''", $v) . "'", $values));
+            $quotedValues = implode(', ', array_map(
+                fn (string $v): string => "'" . str_replace("'", "''", $v) . "'",
+                $values
+            ));
 
             DB::statement("DO $$ BEGIN CREATE TYPE {$quotedType} AS ENUM ({$quotedValues}); EXCEPTION WHEN duplicate_object THEN null; END $$");
 
@@ -58,9 +56,7 @@ class PartitionManagerServiceProvider extends ServiceProvider
         });
     }
 
-    /**
-     * @return array<int, string>
-     */
+    /** @return array<int, string> */
     public function provides(): array
     {
         return ['partition-manager', PartitionManager::class];

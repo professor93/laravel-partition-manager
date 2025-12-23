@@ -17,11 +17,21 @@ class HashSubPartitionBuilder extends AbstractSubPartitionBuilder
     /**
      * Add a single hash partition.
      */
-    public function addHashPartition(string $name, int $modulus, int $remainder, ?string $schema = null): self
-    {
+    public function addHashPartition(
+        string $name,
+        int $modulus,
+        int $remainder,
+        ?string $schema = null,
+        ?AbstractSubPartitionBuilder $subPartitions = null
+    ): self {
         $partition = HashSubPartition::create($name)->withHash($modulus, $remainder);
 
         $this->applySchema($partition, $schema);
+
+        if ($subPartitions !== null) {
+            $partition->withSubPartitions($subPartitions);
+        }
+
         $this->partitions[] = $partition;
 
         return $this;

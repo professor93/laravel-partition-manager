@@ -151,12 +151,21 @@ class PostgresPartitionBuilder
         return $this;
     }
 
-    public function addRangePartition(string $name, mixed $from, mixed $to, ?string $schema = null): self
-    {
+    public function addRangePartition(
+        string $name,
+        mixed $from,
+        mixed $to,
+        ?string $schema = null,
+        ?AbstractSubPartitionBuilder $subPartitions = null
+    ): self {
         $partition = RangePartition::range($name)->withRange($from, $to);
 
         if ($schema !== null) {
             $partition->withSchema($schema);
+        }
+
+        if ($subPartitions !== null) {
+            $partition->withSubPartitions($subPartitions);
         }
 
         $this->partitions[] = $partition;
@@ -167,12 +176,20 @@ class PostgresPartitionBuilder
     /**
      * @param array<int, mixed> $values
      */
-    public function addListPartition(string $name, array $values, ?string $schema = null): self
-    {
+    public function addListPartition(
+        string $name,
+        array $values,
+        ?string $schema = null,
+        ?AbstractSubPartitionBuilder $subPartitions = null
+    ): self {
         $partition = ListPartition::list($name)->withValues($values);
 
         if ($schema !== null) {
             $partition->withSchema($schema);
+        }
+
+        if ($subPartitions !== null) {
+            $partition->withSubPartitions($subPartitions);
         }
 
         $this->partitions[] = $partition;
@@ -180,12 +197,21 @@ class PostgresPartitionBuilder
         return $this;
     }
 
-    public function addHashPartition(string $name, int $modulus, int $remainder, ?string $schema = null): self
-    {
+    public function addHashPartition(
+        string $name,
+        int $modulus,
+        int $remainder,
+        ?string $schema = null,
+        ?AbstractSubPartitionBuilder $subPartitions = null
+    ): self {
         $partition = HashPartition::hash($name)->withHash($modulus, $remainder);
 
         if ($schema !== null) {
             $partition->withSchema($schema);
+        }
+
+        if ($subPartitions !== null) {
+            $partition->withSubPartitions($subPartitions);
         }
 
         $this->partitions[] = $partition;
@@ -589,12 +615,26 @@ class PostgresPartitionBuilder
             default => throw new PartitionException("Unknown sub-partition type: {$subPartition['type']}"),
         };
 
+        // Handle nested sub-partitions
+        if (!empty($subPartition['sub_partitions'])) {
+            $nestedType = strtoupper($subPartition['sub_partitions']['partition_by']['type']);
+            $nestedColumn = self::quoteIdentifier($subPartition['sub_partitions']['partition_by']['column']);
+            $sql .= " PARTITION BY {$nestedType} ({$nestedColumn})";
+        }
+
         if (!empty($subPartition['tablespace'])) {
             $quotedTablespace = self::quoteIdentifier($subPartition['tablespace']);
             $sql .= " TABLESPACE {$quotedTablespace}";
         }
 
         $connection->statement($sql);
+
+        // Recursively create nested sub-partitions
+        if (!empty($subPartition['sub_partitions']['partitions'])) {
+            foreach ($subPartition['sub_partitions']['partitions'] as $nestedSubPartition) {
+                $this->createSubPartition($connection, $subPartitionTable, $nestedSubPartition, $schema);
+            }
+        }
     }
 
     /**

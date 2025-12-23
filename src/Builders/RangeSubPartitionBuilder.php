@@ -82,13 +82,22 @@ class RangeSubPartitionBuilder extends AbstractSubPartitionBuilder
     /**
      * Add a single range partition.
      */
-    public function addRangePartition(string $name, mixed $from, mixed $to, ?string $schema = null): self
-    {
+    public function addRangePartition(
+        string $name,
+        mixed $from,
+        mixed $to,
+        ?string $schema = null,
+        ?AbstractSubPartitionBuilder $subPartitions = null
+    ): self {
         $partition = RangeSubPartition::create($name)->withRange($from, $to);
 
         $effectiveSchema = $this->resolveSchema($schema);
         if ($effectiveSchema !== null) {
             $partition->withSchema($effectiveSchema);
+        }
+
+        if ($subPartitions !== null) {
+            $partition->withSubPartitions($subPartitions);
         }
 
         $this->partitions[] = $partition;

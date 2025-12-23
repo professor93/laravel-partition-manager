@@ -38,7 +38,7 @@ class RangeSubPartition extends SubPartition
      */
     public function toArray(): array
     {
-        return [
+        $data = [
             'type' => 'RANGE',
             'name' => $this->name,
             'from' => $this->from,
@@ -46,5 +46,11 @@ class RangeSubPartition extends SubPartition
             'schema' => $this->schema,
             'tablespace' => $this->tablespace,
         ];
+
+        if ($this->hasSubPartitions()) {
+            $data['sub_partitions'] = $this->subPartitions?->toArray($this->schema);
+        }
+
+        return $data;
     }
 }

@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace Uzbek\LaravelPartitionManager\ValueObjects;
 
+use Uzbek\LaravelPartitionManager\Builders\AbstractSubPartitionBuilder;
+
 abstract class SubPartition
 {
     protected ?string $schema = null;
 
     protected ?string $tablespace = null;
+
+    protected ?AbstractSubPartitionBuilder $subPartitions = null;
 
     public function __construct(
         protected readonly string $name,
@@ -41,6 +45,23 @@ abstract class SubPartition
     public function getTablespace(): ?string
     {
         return $this->tablespace;
+    }
+
+    public function withSubPartitions(AbstractSubPartitionBuilder $builder): self
+    {
+        $this->subPartitions = $builder;
+
+        return $this;
+    }
+
+    public function hasSubPartitions(): bool
+    {
+        return $this->subPartitions !== null;
+    }
+
+    public function getSubPartitions(): ?AbstractSubPartitionBuilder
+    {
+        return $this->subPartitions;
     }
 
     /**

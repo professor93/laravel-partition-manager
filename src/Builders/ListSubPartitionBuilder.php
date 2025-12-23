@@ -19,11 +19,20 @@ class ListSubPartitionBuilder extends AbstractSubPartitionBuilder
      *
      * @param array<int, mixed> $values
      */
-    public function addListPartition(string $name, array $values, ?string $schema = null): self
-    {
+    public function addListPartition(
+        string $name,
+        array $values,
+        ?string $schema = null,
+        ?AbstractSubPartitionBuilder $subPartitions = null
+    ): self {
         $partition = ListSubPartition::create($name)->withValues($values);
 
         $this->applySchema($partition, $schema);
+
+        if ($subPartitions !== null) {
+            $partition->withSubPartitions($subPartitions);
+        }
+
         $this->partitions[] = $partition;
 
         return $this;

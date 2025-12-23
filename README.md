@@ -265,7 +265,11 @@ $hasSchema = $schemaManager->hasSchemaFor('info');
 
 ## Sub-Partitioning
 
-Create hierarchical partition structures:
+Create hierarchical partition structures with support for unlimited nesting levels.
+
+### Inline Sub-Partitions (Recommended)
+
+The cleanest way to define sub-partitions - no need to repeat partition names:
 
 ```php
 use Uzbek\LaravelPartitionManager\Builders\SubPartitionBuilder;
@@ -273,8 +277,24 @@ use Uzbek\LaravelPartitionManager\Builders\SubPartitionBuilder;
 Partition::create('events', function($table) {
     $table->id();
     $table->string('type');
+    $table->integer('user_id');
     $table->timestamp('created_at');
 })
+->by('created_at')
+->addRangePartition('events_2024_01', '2024-01-01', '2024-02-01',
+    subPartitions: SubPartitionBuilder::list('type')
+        ->addListPartition('events_2024_01_user', ['login', 'logout'])
+        ->addListPartition('events_2024_01_system', ['error', 'warning'])
+)
+->generate();
+```
+
+### Separate Declaration
+
+You can also declare sub-partitions separately using `withSubPartitions()`:
+
+```php
+Partition::create('events', function($table) { /* ... */ })
 ->by('created_at')
 ->addRangePartition('events_2024_01', '2024-01-01', '2024-02-01')
 ->withSubPartitions('events_2024_01',
@@ -282,6 +302,37 @@ Partition::create('events', function($table) {
         ->addListPartition('events_2024_01_user', ['login', 'logout'])
         ->addListPartition('events_2024_01_system', ['error', 'warning'])
 )
+->generate();
+```
+
+### Multi-Level Nesting
+
+Sub-partitions can have their own sub-partitions, enabling complex hierarchical structures:
+
+```php
+// Example: LIST → HASH → RANGE (3 levels deep)
+Partition::create('orders', function($table) {
+    $table->id();
+    $table->string('status');
+    $table->integer('user_id');
+    $table->timestamp('created_at');
+})
+->list()
+->by('status')
+->addListPartition('orders_active', ['pending', 'processing'],
+    subPartitions: SubPartitionBuilder::hash('user_id')
+        ->addHashPartition('active_shard_0', 4, 0,
+            subPartitions: SubPartitionBuilder::range('created_at')
+                ->addMonthlyPartitions('m_', 12)
+        )
+        ->addHashPartition('active_shard_1', 4, 1,
+            subPartitions: SubPartitionBuilder::range('created_at')
+                ->addMonthlyPartitions('m_', 12)
+        )
+        ->addHashPartition('active_shard_2', 4, 2)
+        ->addHashPartition('active_shard_3', 4, 3)
+)
+->addListPartition('orders_completed', ['shipped', 'delivered'])
 ->generate();
 ```
 
@@ -302,6 +353,29 @@ $partition = RangePartition::range('data_2024_01')
     );
 
 $builder->addPartition($partition);
+```
+
+### Add Sub-Partitions to Existing Partitions
+
+Convert an existing non-partitioned partition into a partitioned one:
+
+```php
+use Uzbek\LaravelPartitionManager\Services\PartitionMaintenance;
+
+// Add sub-partitions to an existing partition (auto-detects partition expression)
+PartitionMaintenance::addSubPartitions(
+    'orders',                    // parent table
+    'orders_active',             // existing partition to sub-partition
+    SubPartitionBuilder::hash('user_id')->addHashPartitions('shard_', 8)
+);
+
+// Or manually specify the partition expression
+PartitionMaintenance::addSubPartitions(
+    'orders',
+    'orders_active',
+    SubPartitionBuilder::hash('user_id')->addHashPartitions('shard_', 8),
+    "FOR VALUES IN ('active', 'pending')"  // optional, auto-detected if omitted
+);
 ```
 
 ## Partition Management
@@ -373,6 +447,32 @@ $strategy = PartitionManager::getPartitionStrategy('logs');
 ```
 
 ## Advanced Features
+
+### PostgreSQL Enum Types
+
+The package provides a `pgEnum` Blueprint macro for creating PostgreSQL native enum types:
+
+```php
+use Uzbek\LaravelPartitionManager\Partition;
+
+Partition::create('orders', function($table) {
+    $table->id();
+    $table->pgEnum('status', ['pending', 'processing', 'shipped', 'delivered']);
+    $table->pgEnum('priority', ['low', 'medium', 'high'], 'order_priority'); // custom type name
+    $table->timestamp('created_at');
+})
+->list()
+->by('status')
+->addListPartition('orders_pending', ['pending', 'processing'])
+->addListPartition('orders_shipped', ['shipped', 'delivered'])
+->generate();
+```
+
+The macro:
+- Creates a PostgreSQL ENUM type with the specified values
+- Registers the type with Laravel's grammar for proper SQL compilation
+- Auto-generates type name as `{singular_table}_{column}_enum` if not specified
+- Handles duplicate type creation gracefully (won't error if type already exists)
 
 ### Default Partitions
 
@@ -514,26 +614,51 @@ Perform maintenance operations on partitions:
 
 ```php
 use Uzbek\LaravelPartitionManager\Services\PartitionMaintenance;
+use Uzbek\LaravelPartitionManager\Builders\SubPartitionBuilder;
 
 // Vacuum partition (reclaim storage)
 PartitionMaintenance::vacuum('orders_2024_01');
-PartitionMaintenance::vacuumFull('orders_2024_01');
+PartitionMaintenance::vacuum('orders_2024_01', full: true);
+PartitionMaintenance::vacuum('orders_2024_01', analyze: true);
+
+// Vacuum all partitions of a table
+PartitionMaintenance::vacuumAll('orders');
+PartitionMaintenance::vacuumAll('orders', full: true);
 
 // Analyze partition (update statistics)
 PartitionMaintenance::analyze('orders_2024_01');
+PartitionMaintenance::analyzeAll('orders');
 
 // Reindex partition
 PartitionMaintenance::reindex('orders_2024_01');
+PartitionMaintenance::reindex('orders_2024_01', concurrently: true);
+PartitionMaintenance::reindexAll('orders');
 
-// Rebalance hash partitions (parallel capable)
-PartitionMaintenance::rebalanceHash('events');
+// Rebalance hash partitions (change modulus)
+PartitionMaintenance::rebalanceHash('events', newModulus: 16);
+PartitionMaintenance::rebalanceHash('events', newModulus: 16, schema: 'partitions');
+
+// Add sub-partitions to an existing partition
+PartitionMaintenance::addSubPartitions(
+    'orders',
+    'orders_active',
+    SubPartitionBuilder::hash('user_id')->addHashPartitions('shard_', 8)
+);
+
+// Get partition expression for an existing partition
+$expr = PartitionMaintenance::getPartitionExpression('orders', 'orders_active');
+// Returns: "FOR VALUES IN ('active', 'pending')"
+
+// Get commands for parallel execution via jobs/CLI
+$commands = PartitionMaintenance::getParallelVacuumCommands('orders');
+$commands = PartitionMaintenance::getParallelReindexCommands('orders', concurrently: true);
+$commands = PartitionMaintenance::getParallelAnalyzeCommands('orders');
 
 // Dry run mode - returns SQL without executing
-$sql = PartitionMaintenance::dryRun()->vacuum('orders_2024_01');
-
-// Parallel maintenance on all partitions
-PartitionMaintenance::parallel('orders', 'vacuum');
-PartitionMaintenance::parallel('orders', 'analyze');
+$queries = PartitionMaintenance::dryRun(function() {
+    PartitionMaintenance::vacuum('orders_2024_01');
+    PartitionMaintenance::analyze('orders_2024_01');
+});
 ```
 
 ### PartitionConsolidator
@@ -684,7 +809,17 @@ Partition::quarterly(string $table, string $column, int $count = 8): void
 Partition::isPartitioned(string $table): bool
 Partition::getPartitions(string $table): array
 Partition::partitionExists(string $table, string $partitionName): bool
-Partition::dropIfExists(string $table): void
+Partition::dropIfExists(string $table, bool $withSchema = false): void
+Partition::dropSchemaIfEmpty(string $schema): void
+Partition::dropSchemaIfExists(string $schema): void
+
+// Attach partitions (for all partition types)
+Partition::attachPartition(string $table, string $partitionName, mixed $from, mixed $to): void  // RANGE
+Partition::attachListPartition(string $table, string $partitionName, array $values): void       // LIST
+Partition::attachHashPartition(string $table, string $partitionName, int $modulus, int $remainder): void  // HASH
+
+// Detach partition
+Partition::detachPartition(string $table, string $partitionName, bool $concurrently = false): void
 ```
 
 ### PartitionType Enum
@@ -723,11 +858,11 @@ PartitionType::fromPgStrategy('r')  // Returns PartitionType::RANGE
 ->by(string|array $columns): self
 ->partitionByExpression(string $expression): self
 
-// Adding partitions
+// Adding partitions (all support optional subPartitions parameter)
 ->addPartition(PartitionDefinition $partition): self
-->addRangePartition(string $name, mixed $from, mixed $to, ?string $schema = null): self
-->addListPartition(string $name, array $values, ?string $schema = null): self
-->addHashPartition(string $name, int $modulus, int $remainder, ?string $schema = null): self
+->addRangePartition(string $name, mixed $from, mixed $to, ?string $schema = null, ?AbstractSubPartitionBuilder $subPartitions = null): self
+->addListPartition(string $name, array $values, ?string $schema = null, ?AbstractSubPartitionBuilder $subPartitions = null): self
+->addHashPartition(string $name, int $modulus, int $remainder, ?string $schema = null, ?AbstractSubPartitionBuilder $subPartitions = null): self
 ->hashPartitions(int $count, string $prefix = ''): self
 ->dateRange(DateRangeBuilder $builder): self
 
@@ -804,15 +939,30 @@ DateRangeBuilder::quarterly(): self
 ### SubPartitionBuilder
 
 ```php
-SubPartitionBuilder::list(string $column): self
-SubPartitionBuilder::range(string $column): self
-SubPartitionBuilder::hash(string $column): self
+SubPartitionBuilder::list(string $column): ListSubPartitionBuilder
+SubPartitionBuilder::range(string $column): RangeSubPartitionBuilder
+SubPartitionBuilder::hash(string $column): HashSubPartitionBuilder
 
+// Common methods
 ->defaultSchema(string $schema): self
 ->add(SubPartition $partition): self
-->addListPartition(string $name, array $values, ?string $schema = null): self
-->addRangePartition(string $name, mixed $from, mixed $to, ?string $schema = null): self
-->addHashPartition(string $name, int $modulus, int $remainder, ?string $schema = null): self
+->getPartitionType(): PartitionType
+->getPartitionColumn(): string
+->toArray(?string $defaultSchema = null): array
+
+// ListSubPartitionBuilder
+->addListPartition(string $name, array $values, ?string $schema = null, ?AbstractSubPartitionBuilder $subPartitions = null): self
+
+// RangeSubPartitionBuilder
+->addRangePartition(string $name, mixed $from, mixed $to, ?string $schema = null, ?AbstractSubPartitionBuilder $subPartitions = null): self
+->addYearlyPartitions(string $prefix, int $count, string|Carbon|null $startDate = null, ?string $schema = null): self
+->addMonthlyPartitions(string $prefix, int $count, string|Carbon|null $startDate = null, ?string $schema = null): self
+->addWeeklyPartitions(string $prefix, int $count, string|Carbon|null $startDate = null, ?string $schema = null): self
+->addDailyPartitions(string $prefix, int $count, string|Carbon|null $startDate = null, ?string $schema = null): self
+
+// HashSubPartitionBuilder
+->addHashPartition(string $name, int $modulus, int $remainder, ?string $schema = null, ?AbstractSubPartitionBuilder $subPartitions = null): self
+->addHashPartitions(string $prefix, int $modulus, ?string $schema = null): self
 ```
 
 ### Value Objects
@@ -835,17 +985,32 @@ HashPartition::hash(string $name)
     ->withHash(int $modulus, int $remainder): self
     ->withSchema(string $schema): self
 
-// Sub-partition value objects
+// Sub-partition value objects (all support nested sub-partitions)
 RangeSubPartition::create(string $name)
     ->withRange(mixed $from, mixed $to): self
     ->withSchema(string $schema): self
     ->withTablespace(string $tablespace): self
+    ->withSubPartitions(AbstractSubPartitionBuilder $builder): self
 
 ListSubPartition::create(string $name)
     ->withValues(array $values): self
+    ->withSchema(string $schema): self
+    ->withTablespace(string $tablespace): self
+    ->withSubPartitions(AbstractSubPartitionBuilder $builder): self
 
 HashSubPartition::create(string $name)
     ->withHash(int $modulus, int $remainder): self
+    ->withSchema(string $schema): self
+    ->withTablespace(string $tablespace): self
+    ->withSubPartitions(AbstractSubPartitionBuilder $builder): self
+
+// Common SubPartition methods
+->getName(): string
+->getSchema(): ?string
+->getTablespace(): ?string
+->hasSubPartitions(): bool
+->getSubPartitions(): ?AbstractSubPartitionBuilder
+->toArray(): array
 ```
 
 ### PartitionManager Service

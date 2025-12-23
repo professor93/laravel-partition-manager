@@ -38,7 +38,7 @@ class HashSubPartition extends SubPartition
      */
     public function toArray(): array
     {
-        return [
+        $data = [
             'type' => 'HASH',
             'name' => $this->name,
             'modulus' => $this->modulus,
@@ -46,5 +46,11 @@ class HashSubPartition extends SubPartition
             'schema' => $this->schema,
             'tablespace' => $this->tablespace,
         ];
+
+        if ($this->hasSubPartitions()) {
+            $data['sub_partitions'] = $this->subPartitions?->toArray($this->schema);
+        }
+
+        return $data;
     }
 }

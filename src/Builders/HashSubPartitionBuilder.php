@@ -29,6 +29,9 @@ class HashSubPartitionBuilder extends AbstractSubPartitionBuilder
         $this->applySchema($partition, $schema);
 
         if ($subPartitions !== null) {
+            if ($this->tableName !== null) {
+                $subPartitions->table($this->tableName);
+            }
             $partition->withSubPartitions($subPartitions);
         }
 
@@ -40,14 +43,19 @@ class HashSubPartitionBuilder extends AbstractSubPartitionBuilder
     /**
      * Add multiple hash partitions at once.
      *
-     * @param string $prefix Name prefix for partitions (e.g., 'pool_p' generates pool_p0, pool_p1, ...)
      * @param int $modulus Number of partitions (modulus value)
+     * @param string|null $prefix Optional name prefix. If null, auto-generates using baseName (set via for()) or 'p'
      * @param string|null $schema Optional schema for all partitions
      */
-    public function addHashPartitions(string $prefix, int $modulus, ?string $schema = null): self
+    public function addHashPartitions(int $modulus, ?string $prefix = null, ?string $schema = null): self
     {
+        // Auto-generate prefix if not provided, or resolve % placeholder
+        $resolvedPrefix = $prefix !== null
+            ? $this->resolvePrefix($prefix)
+            : ($this->baseName !== null ? "{$this->baseName}_p" : 'p');
+
         for ($remainder = 0; $remainder < $modulus; $remainder++) {
-            $name = $prefix . $remainder;
+            $name = $resolvedPrefix . $remainder;
             $partition = HashSubPartition::create($name)->withHash($modulus, $remainder);
 
             $this->applySchema($partition, $schema);

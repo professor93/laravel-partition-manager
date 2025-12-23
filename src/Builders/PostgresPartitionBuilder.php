@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Uzbek\LaravelPartitionManager\Builders;
 
+use Carbon\Carbon;
 use Exception;
 use Uzbek\LaravelPartitionManager\Enums\PartitionType;
 use Uzbek\LaravelPartitionManager\Exceptions\PartitionException;
@@ -27,7 +28,7 @@ class PostgresPartitionBuilder
 
     protected ?\Closure $tableCallback = null;
 
-    protected PartitionType $partitionType = PartitionType::RANGE;
+    protected ?PartitionType $partitionType = null;
 
     protected ?string $partitionColumn = null;
 
@@ -158,6 +159,8 @@ class PostgresPartitionBuilder
         ?string $schema = null,
         ?AbstractSubPartitionBuilder $subPartitions = null
     ): self {
+        $this->partitionType ??= PartitionType::RANGE;
+
         $partition = RangePartition::range($name)->withRange($from, $to);
 
         if ($schema !== null) {
@@ -165,6 +168,7 @@ class PostgresPartitionBuilder
         }
 
         if ($subPartitions !== null) {
+            $subPartitions->table($this->table);
             $partition->withSubPartitions($subPartitions);
         }
 
@@ -182,6 +186,8 @@ class PostgresPartitionBuilder
         ?string $schema = null,
         ?AbstractSubPartitionBuilder $subPartitions = null
     ): self {
+        $this->partitionType ??= PartitionType::LIST;
+
         $partition = ListPartition::list($name)->withValues($values);
 
         if ($schema !== null) {
@@ -189,6 +195,7 @@ class PostgresPartitionBuilder
         }
 
         if ($subPartitions !== null) {
+            $subPartitions->table($this->table);
             $partition->withSubPartitions($subPartitions);
         }
 
@@ -204,6 +211,8 @@ class PostgresPartitionBuilder
         ?string $schema = null,
         ?AbstractSubPartitionBuilder $subPartitions = null
     ): self {
+        $this->partitionType ??= PartitionType::HASH;
+
         $partition = HashPartition::hash($name)->withHash($modulus, $remainder);
 
         if ($schema !== null) {
@@ -211,6 +220,7 @@ class PostgresPartitionBuilder
         }
 
         if ($subPartitions !== null) {
+            $subPartitions->table($this->table);
             $partition->withSubPartitions($subPartitions);
         }
 
@@ -221,11 +231,253 @@ class PostgresPartitionBuilder
 
     public function withSubPartitions(string $partitionName, AbstractSubPartitionBuilder $builder): self
     {
+        $builder->table($this->table);
+
         foreach ($this->partitions as $partition) {
             if ($partition->getName() === $partitionName) {
                 $partition->withSubPartitions($builder);
                 break;
             }
+        }
+
+        return $this;
+    }
+
+    /**
+     * Add the same sub-partition configuration to all existing partitions.
+     *
+     * The sub-partition builder will be cloned for each partition, with the partition name
+     * set as the baseName (for % placeholder replacement in prefixes).
+     *
+     * @param AbstractSubPartitionBuilder $builder The sub-partition builder to apply
+     */
+    public function addSubPartitionToAll(AbstractSubPartitionBuilder $builder): self
+    {
+        $builder->table($this->table);
+
+        foreach ($this->partitions as $partition) {
+            // Clone the builder so each partition gets its own instance
+            $clonedBuilder = clone $builder;
+            $clonedBuilder->for($partition->getName());
+            $partition->withSubPartitions($clonedBuilder);
+        }
+
+        return $this;
+    }
+
+    /**
+     * Add multiple list partitions at once.
+     *
+     * Accepts two formats:
+     * 1. Simple array: ['new', 'void', 'used'] - each value becomes a partition
+     * 2. Associative array: ['value' => 'partition_name'] or [true => '%_active']
+     *    - Keys are the partition values
+     *    - Values are partition names (use '%' as placeholder for table name)
+     *
+     * @param array<mixed> $values Array of partition values or value => name mappings
+     * @param string|null $schema Optional schema for all partitions
+     */
+    public function addListPartitions(array $values, ?string $schema = null): self
+    {
+        $this->partitionType ??= PartitionType::LIST;
+
+        foreach ($values as $key => $value) {
+            if (is_int($key)) {
+                // Simple array format: ['new', 'void', 'used']
+                $partitionValue = $value;
+                $partitionName = $this->generateListPartitionName($partitionValue);
+            } else {
+                // Associative array format: ['value' => 'partition_name']
+                $partitionValue = $key;
+                $partitionName = $this->resolvePartitionName((string) $value);
+            }
+
+            $partition = ListPartition::list($partitionName)->withValues([$partitionValue]);
+
+            if ($schema !== null) {
+                $partition->withSchema($schema);
+            }
+
+            $this->partitions[] = $partition;
+        }
+
+        return $this;
+    }
+
+    /**
+     * Generate a partition name from a list value.
+     */
+    private function generateListPartitionName(mixed $value): string
+    {
+        $suffix = match (true) {
+            is_bool($value) => $value ? 'true' : 'false',
+            is_int($value), is_float($value) => (string) $value,
+            is_string($value) => preg_replace('/[^a-zA-Z0-9_]/', '_', strtolower($value)),
+            default => md5(serialize($value)),
+        };
+
+        return "{$this->table}_{$suffix}";
+    }
+
+    /**
+     * Resolve partition name, replacing % with table name if present.
+     */
+    private function resolvePartitionName(string $name): string
+    {
+        if (str_contains($name, '%')) {
+            return str_replace('%', $this->table, $name);
+        }
+
+        return $name;
+    }
+
+    /**
+     * Resolve prefix, replacing % with table name if present.
+     */
+    private function resolvePrefix(string $prefix): string
+    {
+        if (str_contains($prefix, '%')) {
+            return str_replace('%', $this->table, $prefix);
+        }
+
+        return $prefix;
+    }
+
+    /**
+     * Add multiple monthly range partitions (non-terminal).
+     *
+     * @param int $count Number of partitions to create
+     * @param string|null $startDate Starting date (defaults to current month start)
+     * @param string|null $prefix Optional name prefix. If null, uses table name + '_m'
+     * @param string|null $schema Optional schema for all partitions
+     */
+    public function addMonthlyPartitions(int $count, ?string $startDate = null, ?string $prefix = null, ?string $schema = null): self
+    {
+        $this->partitionType ??= PartitionType::RANGE;
+
+        $date = $startDate !== null
+            ? Carbon::parse($startDate)->startOfMonth()
+            : Carbon::now()->startOfMonth();
+
+        $resolvedPrefix = $prefix !== null ? $this->resolvePrefix($prefix) : "{$this->table}_m";
+
+        for ($i = 0; $i < $count; $i++) {
+            $from = $date->format('Y-m-d');
+            $to = $date->copy()->addMonth()->format('Y-m-d');
+            $name = $resolvedPrefix . $date->format('Y_m');
+
+            $partition = RangePartition::range($name)->withRange($from, $to);
+            if ($schema !== null) {
+                $partition->withSchema($schema);
+            }
+            $this->partitions[] = $partition;
+
+            $date->addMonth();
+        }
+
+        return $this;
+    }
+
+    /**
+     * Add multiple yearly range partitions (non-terminal).
+     *
+     * @param int $count Number of partitions to create
+     * @param int|null $startYear Starting year (defaults to current year)
+     * @param string|null $prefix Optional name prefix. If null, uses table name + '_y'
+     * @param string|null $schema Optional schema for all partitions
+     */
+    public function addYearlyPartitions(int $count, ?int $startYear = null, ?string $prefix = null, ?string $schema = null): self
+    {
+        $this->partitionType ??= PartitionType::RANGE;
+
+        $date = $startYear !== null
+            ? Carbon::createFromDate($startYear, 1, 1)
+            : Carbon::now()->startOfYear();
+
+        $resolvedPrefix = $prefix !== null ? $this->resolvePrefix($prefix) : "{$this->table}_y";
+
+        for ($i = 0; $i < $count; $i++) {
+            $from = $date->format('Y-m-d');
+            $to = $date->copy()->addYear()->format('Y-m-d');
+            $name = $resolvedPrefix . $date->format('Y');
+
+            $partition = RangePartition::range($name)->withRange($from, $to);
+            if ($schema !== null) {
+                $partition->withSchema($schema);
+            }
+            $this->partitions[] = $partition;
+
+            $date->addYear();
+        }
+
+        return $this;
+    }
+
+    /**
+     * Add multiple weekly range partitions (non-terminal).
+     *
+     * @param int $count Number of partitions to create
+     * @param string|null $startDate Starting date (defaults to Monday of current week)
+     * @param string|null $prefix Optional name prefix. If null, uses table name + '_w'
+     * @param string|null $schema Optional schema for all partitions
+     */
+    public function addWeeklyPartitions(int $count, ?string $startDate = null, ?string $prefix = null, ?string $schema = null): self
+    {
+        $this->partitionType ??= PartitionType::RANGE;
+
+        $date = $startDate !== null
+            ? Carbon::parse($startDate)->startOfWeek()
+            : Carbon::now()->startOfWeek();
+
+        $resolvedPrefix = $prefix !== null ? $this->resolvePrefix($prefix) : "{$this->table}_w";
+
+        for ($i = 0; $i < $count; $i++) {
+            $from = $date->format('Y-m-d');
+            $to = $date->copy()->addWeek()->format('Y-m-d');
+            $name = $resolvedPrefix . $date->format('Y_m_d');
+
+            $partition = RangePartition::range($name)->withRange($from, $to);
+            if ($schema !== null) {
+                $partition->withSchema($schema);
+            }
+            $this->partitions[] = $partition;
+
+            $date->addWeek();
+        }
+
+        return $this;
+    }
+
+    /**
+     * Add multiple daily range partitions (non-terminal).
+     *
+     * @param int $count Number of partitions to create
+     * @param string|null $startDate Starting date (defaults to today)
+     * @param string|null $prefix Optional name prefix. If null, uses table name + '_d'
+     * @param string|null $schema Optional schema for all partitions
+     */
+    public function addDailyPartitions(int $count, ?string $startDate = null, ?string $prefix = null, ?string $schema = null): self
+    {
+        $this->partitionType ??= PartitionType::RANGE;
+
+        $date = $startDate !== null
+            ? Carbon::parse($startDate)->startOfDay()
+            : Carbon::now()->startOfDay();
+
+        $resolvedPrefix = $prefix !== null ? $this->resolvePrefix($prefix) : "{$this->table}_d";
+
+        for ($i = 0; $i < $count; $i++) {
+            $from = $date->format('Y-m-d');
+            $to = $date->copy()->addDay()->format('Y-m-d');
+            $name = $resolvedPrefix . $date->format('Y_m_d');
+
+            $partition = RangePartition::range($name)->withRange($from, $to);
+            if ($schema !== null) {
+                $partition->withSchema($schema);
+            }
+            $this->partitions[] = $partition;
+
+            $date->addDay();
         }
 
         return $this;
@@ -376,16 +628,32 @@ class PostgresPartitionBuilder
         return $this;
     }
 
-    public function hashPartitions(int $count, string $prefix = ''): self
+    /**
+     * Add multiple hash partitions at once (non-terminal).
+     *
+     * @param int $modulus Number of partitions (modulus value)
+     * @param string|null $prefix Optional name prefix. If null, uses table name + '_p'
+     * @param string|null $schema Optional schema for all partitions
+     */
+    public function addHashPartitions(int $modulus, ?string $prefix = null, ?string $schema = null): self
     {
-        $separator = (string) config('partition-manager.naming.separator', '_');
+        // Auto-generate prefix if not provided: {table}_p
+        $resolvedPrefix = $prefix !== null ? $this->resolvePrefix($prefix) : "{$this->table}_p";
 
-        for ($i = 0; $i < $count; $i++) {
-            $partitionName = ($prefix !== '' ? $prefix : $this->table . '_part' . $separator) . $i;
-            $this->addHashPartition($partitionName, $count, $i);
+        for ($i = 0; $i < $modulus; $i++) {
+            $partitionName = $resolvedPrefix . $i;
+            $this->addHashPartition($partitionName, $modulus, $i, $schema);
         }
 
         return $this;
+    }
+
+    /**
+     * @deprecated Use addHashPartitions() instead
+     */
+    public function hashPartitions(int $count, ?string $prefix = null): self
+    {
+        return $this->addHashPartitions($count, $prefix);
     }
 
     public function withDefaultPartition(string $name = 'default'): self
@@ -522,6 +790,12 @@ class PostgresPartitionBuilder
         if ($this->partitionColumn === null) {
             throw new PartitionException(
                 "Partition column not specified. Use by() to set the partition column."
+            );
+        }
+
+        if ($this->partitionType === null) {
+            throw new PartitionException(
+                "Partition type not specified. Use addRangePartition(), addListPartition(), or addHashPartition() to add partitions."
             );
         }
 

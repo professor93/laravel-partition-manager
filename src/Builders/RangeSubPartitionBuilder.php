@@ -97,6 +97,9 @@ class RangeSubPartitionBuilder extends AbstractSubPartitionBuilder
         }
 
         if ($subPartitions !== null) {
+            if ($this->tableName !== null) {
+                $subPartitions->table($this->tableName);
+            }
             $partition->withSubPartitions($subPartitions);
         }
 
@@ -108,20 +111,25 @@ class RangeSubPartitionBuilder extends AbstractSubPartitionBuilder
     /**
      * Add multiple yearly range partitions.
      *
-     * @param string $prefix Name prefix for partitions (e.g., 'archive_' generates archive_y2025, archive_y2026, ...)
      * @param int $count Number of partitions to create
      * @param string|Carbon|null $startDate Starting date (defaults to last partition end or current year start)
+     * @param string|null $prefix Optional name prefix. If null, auto-generates using baseName (set via for()) + '_y'
      * @param string|null $schema Optional schema (defaults to last partition's schema)
      */
-    public function addYearlyPartitions(string $prefix, int $count, string|Carbon|null $startDate = null, ?string $schema = null): self
+    public function addYearlyPartitions(int $count, string|Carbon|null $startDate = null, ?string $prefix = null, ?string $schema = null): self
     {
         $date = $this->resolveStartDate($startDate, 'yearly');
         $effectiveSchema = $this->resolveSchema($schema);
 
+        // Auto-generate prefix if not provided, or resolve % placeholder
+        $resolvedPrefix = $prefix !== null
+            ? $this->resolvePrefix($prefix)
+            : ($this->baseName !== null ? "{$this->baseName}_y" : 'y');
+
         for ($i = 0; $i < $count; $i++) {
             $from = $date->format('Y-m-d');
             $to = $date->copy()->addYear()->format('Y-m-d');
-            $name = $prefix . 'y' . $date->format('Y');
+            $name = $resolvedPrefix . $date->format('Y');
 
             $partition = RangeSubPartition::create($name)->withRange($from, $to);
             if ($effectiveSchema !== null) {
@@ -138,20 +146,25 @@ class RangeSubPartitionBuilder extends AbstractSubPartitionBuilder
     /**
      * Add multiple monthly range partitions.
      *
-     * @param string $prefix Name prefix for partitions (e.g., 'data_' generates data_m2025_01, data_m2025_02, ...)
      * @param int $count Number of partitions to create
      * @param string|Carbon|null $startDate Starting date (defaults to last partition end or current month start)
+     * @param string|null $prefix Optional name prefix. If null, auto-generates using baseName (set via for()) + '_m'
      * @param string|null $schema Optional schema (defaults to last partition's schema)
      */
-    public function addMonthlyPartitions(string $prefix, int $count, string|Carbon|null $startDate = null, ?string $schema = null): self
+    public function addMonthlyPartitions(int $count, string|Carbon|null $startDate = null, ?string $prefix = null, ?string $schema = null): self
     {
         $date = $this->resolveStartDate($startDate, 'monthly');
         $effectiveSchema = $this->resolveSchema($schema);
 
+        // Auto-generate prefix if not provided, or resolve % placeholder
+        $resolvedPrefix = $prefix !== null
+            ? $this->resolvePrefix($prefix)
+            : ($this->baseName !== null ? "{$this->baseName}_m" : 'm');
+
         for ($i = 0; $i < $count; $i++) {
             $from = $date->format('Y-m-d');
             $to = $date->copy()->addMonth()->format('Y-m-d');
-            $name = $prefix . 'm' . $date->format('Y_m');
+            $name = $resolvedPrefix . $date->format('Y_m');
 
             $partition = RangeSubPartition::create($name)->withRange($from, $to);
             if ($effectiveSchema !== null) {
@@ -168,20 +181,25 @@ class RangeSubPartitionBuilder extends AbstractSubPartitionBuilder
     /**
      * Add multiple weekly range partitions.
      *
-     * @param string $prefix Name prefix for partitions (e.g., 'data_' generates data_w2025_03_25, ...)
      * @param int $count Number of partitions to create
      * @param string|Carbon|null $startDate Starting date (defaults to last partition end or current week start)
+     * @param string|null $prefix Optional name prefix. If null, auto-generates using baseName (set via for()) + '_w'
      * @param string|null $schema Optional schema (defaults to last partition's schema)
      */
-    public function addWeeklyPartitions(string $prefix, int $count, string|Carbon|null $startDate = null, ?string $schema = null): self
+    public function addWeeklyPartitions(int $count, string|Carbon|null $startDate = null, ?string $prefix = null, ?string $schema = null): self
     {
         $date = $this->resolveStartDate($startDate, 'weekly');
         $effectiveSchema = $this->resolveSchema($schema);
 
+        // Auto-generate prefix if not provided, or resolve % placeholder
+        $resolvedPrefix = $prefix !== null
+            ? $this->resolvePrefix($prefix)
+            : ($this->baseName !== null ? "{$this->baseName}_w" : 'w');
+
         for ($i = 0; $i < $count; $i++) {
             $from = $date->format('Y-m-d');
             $to = $date->copy()->addWeek()->format('Y-m-d');
-            $name = $prefix . 'w' . $date->format('Y_m_d');
+            $name = $resolvedPrefix . $date->format('Y_m_d');
 
             $partition = RangeSubPartition::create($name)->withRange($from, $to);
             if ($effectiveSchema !== null) {
@@ -198,20 +216,25 @@ class RangeSubPartitionBuilder extends AbstractSubPartitionBuilder
     /**
      * Add multiple daily range partitions.
      *
-     * @param string $prefix Name prefix for partitions (e.g., 'log_' generates log_d2025_04_13, ...)
      * @param int $count Number of partitions to create
      * @param string|Carbon|null $startDate Starting date (defaults to last partition end or today)
+     * @param string|null $prefix Optional name prefix. If null, auto-generates using baseName (set via for()) + '_d'
      * @param string|null $schema Optional schema (defaults to last partition's schema)
      */
-    public function addDailyPartitions(string $prefix, int $count, string|Carbon|null $startDate = null, ?string $schema = null): self
+    public function addDailyPartitions(int $count, string|Carbon|null $startDate = null, ?string $prefix = null, ?string $schema = null): self
     {
         $date = $this->resolveStartDate($startDate, 'daily');
         $effectiveSchema = $this->resolveSchema($schema);
 
+        // Auto-generate prefix if not provided, or resolve % placeholder
+        $resolvedPrefix = $prefix !== null
+            ? $this->resolvePrefix($prefix)
+            : ($this->baseName !== null ? "{$this->baseName}_d" : 'd');
+
         for ($i = 0; $i < $count; $i++) {
             $from = $date->format('Y-m-d');
             $to = $date->copy()->addDay()->format('Y-m-d');
-            $name = $prefix . 'd' . $date->format('Y_m_d');
+            $name = $resolvedPrefix . $date->format('Y_m_d');
 
             $partition = RangeSubPartition::create($name)->withRange($from, $to);
             if ($effectiveSchema !== null) {

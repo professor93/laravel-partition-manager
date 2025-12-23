@@ -114,11 +114,19 @@ Partition::create('users', function($table) {
     $table->string('country');
     $table->string('email');
 })
-->list()
 ->by('country')
 ->addListPartition('users_us', ['US', 'CA'])
 ->addListPartition('users_eu', ['DE', 'FR', 'IT', 'ES'])
 ->addListPartition('users_asia', ['JP', 'CN', 'KR'])
+->generate();
+
+// Or use addListPartitions for bulk creation
+Partition::create('orders', function($table) {
+    $table->id();
+    $table->string('status');
+})
+->by('status')
+->addListPartitions(['pending', 'processing', 'shipped', 'delivered'])
 ->generate();
 ```
 
@@ -132,9 +140,8 @@ Partition::create('events', function($table) {
     $table->string('event_type');
     $table->jsonb('payload');
 })
-->hash()
 ->by('id')
-->hashPartitions(4)
+->addHashPartitions(4)
 ->generate();
 ```
 
@@ -304,6 +311,28 @@ Partition::create('events', function($table) { /* ... */ })
 )
 ->generate();
 ```
+
+### Apply Same Sub-Partition to All Partitions
+
+Use `addSubPartitionToAll()` to apply the same sub-partition configuration to all existing partitions:
+
+```php
+Partition::create('logs', function($table) {
+    $table->id();
+    $table->integer('user_id');
+    $table->timestamp('created_at');
+})
+->by('created_at')
+->addMonthlyPartitions(12, '2024-01-01')
+->addSubPartitionToAll(
+    SubPartitionBuilder::hash('user_id')
+        ->addHashPartitions(4, '%_shard_')  // % = partition name
+        // Creates: logs_m2024_01_shard_0, logs_m2024_01_shard_1, etc.
+)
+->generate();
+```
+
+The `%` placeholder in prefixes is replaced with the parent partition name, making it easy to create hierarchical naming.
 
 ### Multi-Level Nesting
 
@@ -851,22 +880,32 @@ PartitionType::fromPgStrategy('r')  // Returns PartitionType::RANGE
 // Configuration
 ->setBlueprint(Blueprint $blueprint): self
 ->connection(string $connection): self
-->partition(PartitionType|string $type): self
-->range(): self
-->list(): self
-->hash(): self
+->partition(PartitionType|string $type): self  // Optional: auto-detected from add*Partition calls
+->range(): self   // Optional: auto-detected
+->list(): self    // Optional: auto-detected
+->hash(): self    // Optional: auto-detected
 ->by(string|array $columns): self
 ->partitionByExpression(string $expression): self
 
-// Adding partitions (all support optional subPartitions parameter)
+// Adding single partitions (all support optional subPartitions parameter)
 ->addPartition(PartitionDefinition $partition): self
 ->addRangePartition(string $name, mixed $from, mixed $to, ?string $schema = null, ?AbstractSubPartitionBuilder $subPartitions = null): self
 ->addListPartition(string $name, array $values, ?string $schema = null, ?AbstractSubPartitionBuilder $subPartitions = null): self
 ->addHashPartition(string $name, int $modulus, int $remainder, ?string $schema = null, ?AbstractSubPartitionBuilder $subPartitions = null): self
-->hashPartitions(int $count, string $prefix = ''): self
+
+// Adding multiple partitions at once (non-terminal)
+// All prefix parameters support % as placeholder for table name
+->addListPartitions(array $values, ?string $schema = null): self
+// Examples: ['new', 'void', 'used'] or [true => '%_active', false => '%_inactive']
+->addHashPartitions(int $modulus, ?string $prefix = null, ?string $schema = null): self
+// Example: addHashPartitions(4, '%_shard_') creates: orders_shard_0, orders_shard_1, etc.
+->addMonthlyPartitions(int $count, ?string $startDate = null, ?string $prefix = null, ?string $schema = null): self
+->addYearlyPartitions(int $count, ?int $startYear = null, ?string $prefix = null, ?string $schema = null): self
+->addWeeklyPartitions(int $count, ?string $startDate = null, ?string $prefix = null, ?string $schema = null): self
+->addDailyPartitions(int $count, ?string $startDate = null, ?string $prefix = null, ?string $schema = null): self
 ->dateRange(DateRangeBuilder $builder): self
 
-// Terminal methods (execute immediately)
+// Terminal methods (execute immediately, includes generate())
 ->monthly(int $count = 12, ?string $startDate = null): void
 ->yearly(int $count = 5, ?int $startYear = null): void
 ->daily(int $count = 30, ?string $startDate = null): void
@@ -878,8 +917,11 @@ PartitionType::fromPgStrategy('r')  // Returns PartitionType::RANGE
 ->schemaFor(string $partitionType, string $schema): self
 ->schemasFor(array $schemas): self
 
-// Advanced options
+// Sub-partitions
 ->withSubPartitions(string $partitionName, SubPartitionBuilder $builder): self
+->addSubPartitionToAll(AbstractSubPartitionBuilder $builder): self  // Apply same sub-partition to all partitions
+
+// Advanced options
 ->withDefaultPartition(string $name = 'default'): self
 ->tablespace(string $tablespace): self
 ->check(string $name, string $expression): self
@@ -944,25 +986,36 @@ SubPartitionBuilder::range(string $column): RangeSubPartitionBuilder
 SubPartitionBuilder::hash(string $column): HashSubPartitionBuilder
 
 // Common methods
-->defaultSchema(string $schema): self
+->for(string $baseName): self  // Set base name for auto-generating partition names
+->table(string $tableName): self  // Set table name for column type lookups (auto-set when used via PostgresPartitionBuilder)
+->schema(string $schema): self
 ->add(SubPartition $partition): self
+->getBaseName(): ?string
+->getTableName(): ?string
 ->getPartitionType(): PartitionType
 ->getPartitionColumn(): string
 ->toArray(?string $defaultSchema = null): array
 
 // ListSubPartitionBuilder
 ->addListPartition(string $name, array $values, ?string $schema = null, ?AbstractSubPartitionBuilder $subPartitions = null): self
+->addListPartitions(array $values, ?string $schema = null): self
+// Examples:
+//   ->addListPartitions(['new', 'void', 'used'])  // auto-generated names using baseName
+//   ->addListPartitions(['new' => '%_new', 'void' => '%_void'])  // % = baseName placeholder
+//   ->addListPartitions(['false' => 'inactive', 'true' => 'active'])  // casts based on column type (auto-detected)
 
 // RangeSubPartitionBuilder
 ->addRangePartition(string $name, mixed $from, mixed $to, ?string $schema = null, ?AbstractSubPartitionBuilder $subPartitions = null): self
-->addYearlyPartitions(string $prefix, int $count, string|Carbon|null $startDate = null, ?string $schema = null): self
-->addMonthlyPartitions(string $prefix, int $count, string|Carbon|null $startDate = null, ?string $schema = null): self
-->addWeeklyPartitions(string $prefix, int $count, string|Carbon|null $startDate = null, ?string $schema = null): self
-->addDailyPartitions(string $prefix, int $count, string|Carbon|null $startDate = null, ?string $schema = null): self
+->addYearlyPartitions(int $count, string|Carbon|null $startDate = null, ?string $prefix = null, ?string $schema = null): self
+->addMonthlyPartitions(int $count, string|Carbon|null $startDate = null, ?string $prefix = null, ?string $schema = null): self
+->addWeeklyPartitions(int $count, string|Carbon|null $startDate = null, ?string $prefix = null, ?string $schema = null): self
+->addDailyPartitions(int $count, string|Carbon|null $startDate = null, ?string $prefix = null, ?string $schema = null): self
+// If prefix is null, auto-generates using baseName: {baseName}_y, {baseName}_m, {baseName}_w, {baseName}_d
 
 // HashSubPartitionBuilder
 ->addHashPartition(string $name, int $modulus, int $remainder, ?string $schema = null, ?AbstractSubPartitionBuilder $subPartitions = null): self
-->addHashPartitions(string $prefix, int $modulus, ?string $schema = null): self
+->addHashPartitions(int $modulus, ?string $prefix = null, ?string $schema = null): self
+// If prefix is null, auto-generates using baseName: {baseName}_p
 ```
 
 ### Value Objects

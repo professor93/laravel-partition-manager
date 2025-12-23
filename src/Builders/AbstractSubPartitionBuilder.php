@@ -14,10 +14,51 @@ abstract class AbstractSubPartitionBuilder
 
     protected ?string $schema = null;
 
+    protected ?string $baseName = null;
+
+    protected ?string $tableName = null;
+
     public function __construct(
         protected readonly PartitionType $partitionType,
         protected readonly string $partitionColumn,
     ) {}
+
+    /**
+     * Set the table name for column type lookups.
+     */
+    public function table(string $tableName): static
+    {
+        $this->tableName = $tableName;
+
+        return $this;
+    }
+
+    /**
+     * Get the table name for column type lookups.
+     */
+    public function getTableName(): ?string
+    {
+        return $this->tableName;
+    }
+
+    /**
+     * Set the base name for auto-generating partition names.
+     * This is typically the parent partition name.
+     */
+    public function for(string $baseName): static
+    {
+        $this->baseName = $baseName;
+
+        return $this;
+    }
+
+    /**
+     * Get the base name for auto-generating partition names.
+     */
+    public function getBaseName(): ?string
+    {
+        return $this->baseName;
+    }
 
     /**
      * Set the default schema for partitions in this builder.
@@ -91,5 +132,17 @@ abstract class AbstractSubPartitionBuilder
         } elseif ($this->schema !== null) {
             $partition->withSchema($this->schema);
         }
+    }
+
+    /**
+     * Resolve prefix, replacing % with baseName if present.
+     */
+    protected function resolvePrefix(string $prefix): string
+    {
+        if (str_contains($prefix, '%')) {
+            return str_replace('%', $this->baseName ?? '', $prefix);
+        }
+
+        return $prefix;
     }
 }

@@ -65,6 +65,116 @@ class PartitionStats
         return $result[0]->strategy ?? null;
     }
 
+    /**
+     * Get the partition column name for a table.
+     */
+    public static function getPartitionColumn(string $table): ?string
+    {
+        $result = DB::select("
+            SELECT a.attname AS column_name
+            FROM pg_partitioned_table pt
+            JOIN pg_attribute a ON a.attrelid = pt.partrelid AND a.attnum = ANY(pt.partattrs)
+            WHERE pt.partrelid = ?::regclass
+            LIMIT 1
+        ", [$table]);
+
+        return $result[0]->column_name ?? null;
+    }
+
+    /**
+     * Get the schema of the last (most recent) partition.
+     *
+     * Analyzes existing partitions to find the one with the highest boundary
+     * and extracts its schema. Returns null if no schema is used.
+     */
+    public static function getLastPartitionSchema(string $table): ?string
+    {
+        $boundaries = self::boundaries($table);
+
+        if (empty($boundaries)) {
+            return null;
+        }
+
+        // Filter RANGE partitions with valid to_value and sort by to_value descending
+        $rangeBoundaries = array_filter(
+            $boundaries,
+            fn($b) => $b->partition_type === 'RANGE' && $b->to_value !== null
+        );
+
+        if (empty($rangeBoundaries)) {
+            // Fallback: just take the last partition by name
+            $lastPartition = end($boundaries);
+        } else {
+            usort($rangeBoundaries, fn($a, $b) => strcmp($b->to_value, $a->to_value));
+            $lastPartition = reset($rangeBoundaries);
+        }
+
+        $partitionName = $lastPartition->partition_name;
+
+        // Extract schema if partition name contains a dot (schema.table format)
+        if (str_contains($partitionName, '.')) {
+            return explode('.', $partitionName, 2)[0];
+        }
+
+        return null;
+    }
+
+    /**
+     * Detect partition interval from existing partitions.
+     *
+     * Analyzes the boundaries of existing partitions to determine the interval.
+     * Returns 'daily', 'weekly', 'monthly', or 'yearly'.
+     */
+    public static function detectInterval(string $table): ?string
+    {
+        $boundaries = self::boundaries($table);
+
+        // Filter only RANGE partitions with valid boundaries
+        $rangeBoundaries = array_filter($boundaries, fn($b) => $b->partition_type === 'RANGE' && $b->from_value && $b->to_value);
+
+        if (empty($rangeBoundaries)) {
+            return null;
+        }
+
+        // Sort by from_value
+        usort($rangeBoundaries, fn($a, $b) => strcmp($a->from_value, $b->from_value));
+
+        // Take the first partition with valid date boundaries
+        $first = reset($rangeBoundaries);
+
+        try {
+            $from = new \DateTime($first->from_value);
+            $to = new \DateTime($first->to_value);
+            $diff = $from->diff($to);
+
+            // Calculate total days
+            $days = $diff->days;
+
+            if ($days === 1) {
+                return 'daily';
+            } elseif ($days >= 6 && $days <= 8) {
+                return 'weekly';
+            } elseif ($days >= 28 && $days <= 31) {
+                return 'monthly';
+            } elseif ($days >= 365 && $days <= 366) {
+                return 'yearly';
+            } elseif ($days >= 89 && $days <= 92) {
+                return 'quarterly';
+            }
+
+            // Fallback: check if months differ
+            if ($diff->m === 1 && $diff->d === 0 && $diff->y === 0) {
+                return 'monthly';
+            } elseif ($diff->y === 1 && $diff->m === 0 && $diff->d === 0) {
+                return 'yearly';
+            }
+        } catch (\Exception $e) {
+            return null;
+        }
+
+        return null;
+    }
+
     public static function boundaries(string $table): array
     {
         $partitions = Partition::getPartitions($table);

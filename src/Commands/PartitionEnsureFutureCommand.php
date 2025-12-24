@@ -7,23 +7,24 @@ namespace Uzbek\LaravelPartitionManager\Commands;
 use Illuminate\Console\Command;
 use Uzbek\LaravelPartitionManager\Partition;
 use Uzbek\LaravelPartitionManager\Services\PartitionRotation;
+use Uzbek\LaravelPartitionManager\Services\PartitionStats;
 
 class PartitionEnsureFutureCommand extends Command
 {
     protected $signature = 'partition:ensure-future
         {table : The partitioned table name}
-        {column : The partition column}
-        {--count=3 : Number of future partitions to ensure}
-        {--interval=monthly : Interval (daily, weekly, monthly, yearly)}
+        {--column= : The partition column (auto-detected if not specified)}
+        {--count=3 : Number of future partitions to ensure from current date}
+        {--interval= : Interval (daily, weekly, monthly, yearly). Auto-detected if not specified}
         {--schema= : Schema for new partitions}
         {--connection= : Database connection to use}';
 
-    protected $description = 'Ensure future partitions exist for a table';
+    protected $description = 'Ensure future partitions exist for a table from current date';
 
     public function handle(): int
     {
         $table = $this->argument('table');
-        $column = $this->argument('column');
+        $column = $this->option('column');
         $count = (int) $this->option('count');
         $interval = $this->option('interval');
         $schema = $this->option('schema');
@@ -33,22 +34,41 @@ class PartitionEnsureFutureCommand extends Command
             return self::FAILURE;
         }
 
-        $this->info("Ensuring {$count} future {$interval} partitions for '{$table}'...");
+        // Show auto-detected values
+        $actualColumn = $column ?? PartitionStats::getPartitionColumn($table);
+        $actualInterval = $interval ?? PartitionStats::detectInterval($table);
 
-        $created = PartitionRotation::ensureFuture(
-            $table,
-            $column,
-            $count,
-            $interval,
-            $schema
-        );
-
-        if ($created > 0) {
-            $this->info("Created {$created} new partition(s).");
-        } else {
-            $this->info('All future partitions already exist.');
+        if ($actualColumn === null) {
+            $this->error("Cannot determine partition column for table '{$table}'. Please specify with --column.");
+            return self::FAILURE;
         }
 
-        return self::SUCCESS;
+        if ($actualInterval === null) {
+            $this->error("Cannot detect partition interval for table '{$table}'. Please specify with --interval.");
+            return self::FAILURE;
+        }
+
+        $this->info("Ensuring {$count} future {$actualInterval} partitions for '{$table}' (column: {$actualColumn})...");
+
+        try {
+            $created = PartitionRotation::ensureFuture(
+                table: $table,
+                count: $count,
+                column: $column,
+                interval: $interval,
+                schema: $schema
+            );
+
+            if ($created > 0) {
+                $this->info("Created {$created} new partition(s).");
+            } else {
+                $this->info('All future partitions already exist.');
+            }
+
+            return self::SUCCESS;
+        } catch (\RuntimeException $e) {
+            $this->error($e->getMessage());
+            return self::FAILURE;
+        }
     }
 }

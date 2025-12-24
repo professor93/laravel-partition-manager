@@ -13,12 +13,18 @@ use Uzbek\LaravelPartitionManager\Services\PartitionRotation;
  *
  * Usage in Kernel.php:
  *
+ *     // Simple usage - column and interval auto-detected from existing table:
+ *     $schedule->partition('orders')
+ *         ->ensureFuture(4)
+ *         ->daily();
+ *
+ *     // With explicit column (for initial setup or custom scenarios):
  *     $schedule->partition('orders', 'created_at')
  *         ->ensureFuture(3, 'monthly')
  *         ->daily()
  *         ->at('02:00');
  *
- *     $schedule->partition('logs', 'created_at')
+ *     $schedule->partition('logs')
  *         ->rotate(keep: 12)
  *         ->monthly();
  */
@@ -26,17 +32,17 @@ class PartitionScheduleBuilder
 {
     protected Schedule $schedule;
     protected string $table;
-    protected string $column;
+    protected ?string $column;
     protected ?string $schema = null;
 
     protected ?int $ensureFutureCount = null;
-    protected string $ensureFutureInterval = 'monthly';
+    protected ?string $ensureFutureInterval = null;
     protected ?int $rotateKeep = null;
     protected bool $rotateDropSchemas = false;
 
     protected ?Event $event = null;
 
-    public function __construct(Schedule $schedule, string $table, string $column)
+    public function __construct(Schedule $schedule, string $table, ?string $column = null)
     {
         $this->schedule = $schedule;
         $this->table = $table;
@@ -53,12 +59,16 @@ class PartitionScheduleBuilder
     }
 
     /**
-     * Ensure a number of future partitions exist.
+     * Ensure a number of future partitions exist from current date.
      *
-     * @param int $count Number of future partitions to ensure
-     * @param string $interval Interval (daily, weekly, monthly, yearly)
+     * When no interval is specified, it will be auto-detected from existing partitions.
+     * When count is 4 and interval is 'monthly', this ensures partitions exist for
+     * the next 4 months from today.
+     *
+     * @param int $count Number of future partitions to ensure from current date
+     * @param string|null $interval Interval (daily, weekly, monthly, yearly). If null, auto-detected.
      */
-    public function ensureFuture(int $count, string $interval = 'monthly'): self
+    public function ensureFuture(int $count, ?string $interval = null): self
     {
         $this->ensureFutureCount = $count;
         $this->ensureFutureInterval = $interval;
@@ -278,11 +288,11 @@ class PartitionScheduleBuilder
 
             if ($ensureFutureCount !== null) {
                 $result->partitionsCreated = PartitionRotation::ensureFuture(
-                    $table,
-                    $column,
-                    $ensureFutureCount,
-                    $ensureFutureInterval,
-                    $schema
+                    table: $table,
+                    count: $ensureFutureCount,
+                    column: $column,
+                    interval: $ensureFutureInterval,
+                    schema: $schema
                 );
             }
 

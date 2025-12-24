@@ -66,6 +66,9 @@ class PartitionManagerServiceProvider extends ServiceProvider
 
     /**
      * Register the partition() macro on Laravel's Schedule class.
+     *
+     * The column parameter is optional - if not provided, it will be auto-detected
+     * from the existing partitioned table structure when ensureFuture() is called.
      */
     protected function registerSchedulerMacro(): void
     {
@@ -73,7 +76,7 @@ class PartitionManagerServiceProvider extends ServiceProvider
             return;
         }
 
-        Schedule::macro('partition', function (string $table, string $column): PartitionScheduleBuilder {
+        Schedule::macro('partition', function (string $table, ?string $column = null): PartitionScheduleBuilder {
             /** @var Schedule $this */
             return new PartitionScheduleBuilder($this, $table, $column);
         });

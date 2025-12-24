@@ -5,13 +5,16 @@ declare(strict_types=1);
 namespace Uzbek\LaravelPartitionManager\Services;
 
 use DateTime;
+use DateTimeInterface;
 use Uzbek\LaravelPartitionManager\Partition;
+use Uzbek\LaravelPartitionManager\Traits\DateNormalizer;
 use Uzbek\LaravelPartitionManager\Traits\SqlHelper;
 use Illuminate\Support\Facades\DB;
 
 class PartitionRotation
 {
     use SqlHelper;
+    use DateNormalizer;
 
     /**
      * Ensure future partitions exist from the current date.
@@ -255,14 +258,35 @@ class PartitionRotation
         return $dropped;
     }
 
-    public static function addMonthlyForYear(string $table, string $column, int $year, ?string $schema = null): void
-    {
+    /**
+     * Add monthly partitions for a full year.
+     *
+     * @param string $table Table name
+     * @param string $column Partition column
+     * @param int|string|DateTimeInterface $year Year to add partitions for. Accepts:
+     *        - int: year (2026 → 2026-01-01)
+     *        - string: "2026", "2026-01", or any parseable date
+     *        - DateTimeInterface: used directly (uses the year from the date)
+     * @param string|null $schema Optional schema for partitions
+     */
+    public static function addMonthlyForYear(
+        string $table,
+        string $column,
+        int|string|DateTimeInterface $year,
+        ?string $schema = null
+    ): void {
         $builder = Partition::for($table)->by($column);
 
         if ($schema !== null) {
             $builder->schema($schema);
         }
 
-        $builder->monthly(12, "{$year}-01-01");
+        // Use a static instance to access the DateNormalizer trait
+        $normalizer = new self();
+        $startDate = $normalizer->normalizeDate($year);
+        // Always start from January 1st of the given year
+        $startDate->setDate((int) $startDate->format('Y'), 1, 1);
+
+        $builder->monthly(12, $startDate->format('Y-m-d'));
     }
 }

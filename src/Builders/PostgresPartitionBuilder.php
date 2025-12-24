@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Uzbek\LaravelPartitionManager\Builders;
 
 use Carbon\Carbon;
+use DateTimeInterface;
 use Exception;
 use Uzbek\LaravelPartitionManager\Enums\PartitionType;
 use Uzbek\LaravelPartitionManager\Exceptions\InvalidPartitionTypeException;
@@ -15,6 +16,7 @@ use Uzbek\LaravelPartitionManager\Services\PartitionSchemaManager;
 use Uzbek\LaravelPartitionManager\Templates\PartitionTemplate;
 use Uzbek\LaravelPartitionManager\Services\SchemaCreator;
 use Uzbek\LaravelPartitionManager\Traits\BuilderHelper;
+use Uzbek\LaravelPartitionManager\Traits\DateNormalizer;
 use Uzbek\LaravelPartitionManager\Traits\SqlHelper;
 use Uzbek\LaravelPartitionManager\ValueObjects\HashPartition;
 use Uzbek\LaravelPartitionManager\ValueObjects\ListPartition;
@@ -27,6 +29,7 @@ class PostgresPartitionBuilder
 {
     use SqlHelper;
     use BuilderHelper;
+    use DateNormalizer;
 
     protected ?Blueprint $blueprint = null;
 
@@ -416,17 +419,25 @@ class PostgresPartitionBuilder
      * Add multiple monthly range partitions (non-terminal).
      *
      * @param int $count Number of partitions to create
-     * @param string|null $startDate Starting date (defaults to current month start)
+     * @param int|string|DateTimeInterface|null $start Starting date. Accepts:
+     *        - int: year (2026 → 2026-01-01)
+     *        - string: "2026", "2026-01", "2026-01-15", or any parseable date
+     *        - DateTimeInterface: used directly
+     *        - null: uses current date
      * @param string|null $prefix Optional name prefix. If null, uses table name + '_m'
      * @param string|null $schema Optional schema for all partitions
+     * @param bool $fromToday If true and start is null, explicitly start from today
      */
-    public function addMonthlyPartitions(int $count, ?string $startDate = null, ?string $prefix = null, ?string $schema = null): self
-    {
+    public function addMonthlyPartitions(
+        int $count,
+        int|string|DateTimeInterface|null $start = null,
+        ?string $prefix = null,
+        ?string $schema = null,
+        bool $fromToday = false
+    ): self {
         $this->partitionType ??= PartitionType::RANGE;
 
-        $date = $startDate !== null
-            ? Carbon::parse($startDate)->startOfMonth()
-            : Carbon::now()->startOfMonth();
+        $date = Carbon::instance($this->normalizeDateForInterval($start, 'monthly', $fromToday));
 
         $resolvedPrefix = $prefix !== null ? $this->resolvePrefix($prefix) : "{$this->table}_m";
 
@@ -450,19 +461,29 @@ class PostgresPartitionBuilder
     /**
      * Add multiple yearly range partitions (non-terminal).
      *
+     * Yearly partitions can start on any date (e.g., '2024-06-01' for fiscal years).
+     *
      * @param int $count Number of partitions to create
-     * @param string|null $startDate Starting date (defaults to current date). Yearly partitions
-     *                               can start on any date (e.g., '2024-06-01' for fiscal years).
+     * @param int|string|DateTimeInterface|null $start Starting date. Accepts:
+     *        - int: year (2026 → 2026-01-01)
+     *        - string: "2026", "2026-01", "2026-06-01", or any parseable date
+     *        - DateTimeInterface: used directly
+     *        - null: uses current date
      * @param string|null $prefix Optional name prefix. If null, uses table name + '_y'
      * @param string|null $schema Optional schema for all partitions
+     * @param bool $fromToday If true and start is null, explicitly start from today
      */
-    public function addYearlyPartitions(int $count, ?string $startDate = null, ?string $prefix = null, ?string $schema = null): self
-    {
+    public function addYearlyPartitions(
+        int $count,
+        int|string|DateTimeInterface|null $start = null,
+        ?string $prefix = null,
+        ?string $schema = null,
+        bool $fromToday = false
+    ): self {
         $this->partitionType ??= PartitionType::RANGE;
 
-        $date = $startDate !== null
-            ? Carbon::parse($startDate)
-            : Carbon::now();
+        // For yearly, we don't force alignment - keep the exact date for fiscal year support
+        $date = Carbon::instance($this->normalizeDate($start, $fromToday));
 
         $resolvedPrefix = $prefix !== null ? $this->resolvePrefix($prefix) : "{$this->table}_y";
 
@@ -487,17 +508,25 @@ class PostgresPartitionBuilder
      * Add multiple weekly range partitions (non-terminal).
      *
      * @param int $count Number of partitions to create
-     * @param string|null $startDate Starting date (defaults to Monday of current week)
+     * @param int|string|DateTimeInterface|null $start Starting date. Accepts:
+     *        - int: year (2026 → 2026-01-01, aligned to Monday)
+     *        - string: "2026", "2026-01", "2026-01-15", or any parseable date
+     *        - DateTimeInterface: used directly (aligned to Monday)
+     *        - null: uses current week's Monday
      * @param string|null $prefix Optional name prefix. If null, uses table name + '_w'
      * @param string|null $schema Optional schema for all partitions
+     * @param bool $fromToday If true and start is null, explicitly start from today's week
      */
-    public function addWeeklyPartitions(int $count, ?string $startDate = null, ?string $prefix = null, ?string $schema = null): self
-    {
+    public function addWeeklyPartitions(
+        int $count,
+        int|string|DateTimeInterface|null $start = null,
+        ?string $prefix = null,
+        ?string $schema = null,
+        bool $fromToday = false
+    ): self {
         $this->partitionType ??= PartitionType::RANGE;
 
-        $date = $startDate !== null
-            ? Carbon::parse($startDate)->startOfWeek()
-            : Carbon::now()->startOfWeek();
+        $date = Carbon::instance($this->normalizeDateForInterval($start, 'weekly', $fromToday));
 
         $resolvedPrefix = $prefix !== null ? $this->resolvePrefix($prefix) : "{$this->table}_w";
 
@@ -522,17 +551,25 @@ class PostgresPartitionBuilder
      * Add multiple daily range partitions (non-terminal).
      *
      * @param int $count Number of partitions to create
-     * @param string|null $startDate Starting date (defaults to today)
+     * @param int|string|DateTimeInterface|null $start Starting date. Accepts:
+     *        - int: year (2026 → 2026-01-01)
+     *        - string: "2026", "2026-01", "2026-01-15", or any parseable date
+     *        - DateTimeInterface: used directly
+     *        - null: uses current date
      * @param string|null $prefix Optional name prefix. If null, uses table name + '_d'
      * @param string|null $schema Optional schema for all partitions
+     * @param bool $fromToday If true and start is null, explicitly start from today
      */
-    public function addDailyPartitions(int $count, ?string $startDate = null, ?string $prefix = null, ?string $schema = null): self
-    {
+    public function addDailyPartitions(
+        int $count,
+        int|string|DateTimeInterface|null $start = null,
+        ?string $prefix = null,
+        ?string $schema = null,
+        bool $fromToday = false
+    ): self {
         $this->partitionType ??= PartitionType::RANGE;
 
-        $date = $startDate !== null
-            ? Carbon::parse($startDate)->startOfDay()
-            : Carbon::now()->startOfDay();
+        $date = Carbon::instance($this->normalizeDateForInterval($start, 'daily', $fromToday));
 
         $resolvedPrefix = $prefix !== null ? $this->resolvePrefix($prefix) : "{$this->table}_d";
 
@@ -560,18 +597,22 @@ class PostgresPartitionBuilder
      * Automatically sets partition type to RANGE.
      *
      * @param int $count Number of monthly partitions to create
-     * @param string|null $startDate Start date (defaults to first day of current month)
+     * @param int|string|DateTimeInterface|null $start Starting date. Accepts:
+     *        - int: year (2026 → 2026-01-01)
+     *        - string: "2026", "2026-01", "2026-01-15", or any parseable date
+     *        - DateTimeInterface: used directly
+     *        - null: uses current month
      * @return void
      * @throws PartitionException If partition column is not set
      */
-    public function monthly(int $count = 12, ?string $startDate = null): void
+    public function monthly(int $count = 12, int|string|DateTimeInterface|null $start = null): void
     {
         $this->ensurePartitionColumnSet();
         $this->partitionType = PartitionType::RANGE;
 
         $builder = DateRangeBuilder::monthly()->count($count);
-        if ($startDate !== null) {
-            $builder->from($startDate);
+        if ($start !== null) {
+            $builder->from($this->normalizeDate($start));
         }
 
         $this->dateRange($builder);
@@ -585,18 +626,22 @@ class PostgresPartitionBuilder
      * Automatically sets partition type to RANGE.
      *
      * @param int $count Number of yearly partitions to create
-     * @param int|null $startYear Start year (defaults to current year)
+     * @param int|string|DateTimeInterface|null $start Starting date. Accepts:
+     *        - int: year (2026 → 2026-01-01)
+     *        - string: "2026", "2026-06", "2026-06-01", or any parseable date
+     *        - DateTimeInterface: used directly
+     *        - null: uses current date
      * @return void
      * @throws PartitionException If partition column is not set
      */
-    public function yearly(int $count = 5, ?int $startYear = null): void
+    public function yearly(int $count = 5, int|string|DateTimeInterface|null $start = null): void
     {
         $this->ensurePartitionColumnSet();
         $this->partitionType = PartitionType::RANGE;
 
         $builder = DateRangeBuilder::yearly()->count($count);
-        if ($startYear !== null) {
-            $builder->from("{$startYear}-01-01");
+        if ($start !== null) {
+            $builder->from($this->normalizeDate($start));
         }
 
         $this->dateRange($builder);
@@ -610,18 +655,22 @@ class PostgresPartitionBuilder
      * Automatically sets partition type to RANGE.
      *
      * @param int $count Number of daily partitions to create
-     * @param string|null $startDate Start date (defaults to today)
+     * @param int|string|DateTimeInterface|null $start Starting date. Accepts:
+     *        - int: year (2026 → 2026-01-01)
+     *        - string: "2026", "2026-01", "2026-01-15", or any parseable date
+     *        - DateTimeInterface: used directly
+     *        - null: uses current date
      * @return void
      * @throws PartitionException If partition column is not set
      */
-    public function daily(int $count = 30, ?string $startDate = null): void
+    public function daily(int $count = 30, int|string|DateTimeInterface|null $start = null): void
     {
         $this->ensurePartitionColumnSet();
         $this->partitionType = PartitionType::RANGE;
 
         $builder = DateRangeBuilder::daily()->count($count);
-        if ($startDate !== null) {
-            $builder->from($startDate);
+        if ($start !== null) {
+            $builder->from($this->normalizeDate($start));
         }
 
         $this->dateRange($builder);
@@ -635,18 +684,22 @@ class PostgresPartitionBuilder
      * Automatically sets partition type to RANGE.
      *
      * @param int $count Number of weekly partitions to create
-     * @param string|null $startDate Start date (defaults to Monday of current week)
+     * @param int|string|DateTimeInterface|null $start Starting date. Accepts:
+     *        - int: year (2026 → 2026-01-01, aligned to Monday)
+     *        - string: "2026", "2026-01", "2026-01-15", or any parseable date
+     *        - DateTimeInterface: used directly
+     *        - null: uses current week's Monday
      * @return void
      * @throws PartitionException If partition column is not set
      */
-    public function weekly(int $count = 12, ?string $startDate = null): void
+    public function weekly(int $count = 12, int|string|DateTimeInterface|null $start = null): void
     {
         $this->ensurePartitionColumnSet();
         $this->partitionType = PartitionType::RANGE;
 
         $builder = DateRangeBuilder::weekly()->count($count);
-        if ($startDate !== null) {
-            $builder->from($startDate);
+        if ($start !== null) {
+            $builder->from($this->normalizeDate($start));
         }
 
         $this->dateRange($builder);
@@ -660,18 +713,22 @@ class PostgresPartitionBuilder
      * Automatically sets partition type to RANGE.
      *
      * @param int $count Number of quarterly partitions to create
-     * @param int|null $startYear Start year (defaults to current year)
+     * @param int|string|DateTimeInterface|null $start Starting date. Accepts:
+     *        - int: year (2026 → 2026-01-01)
+     *        - string: "2026", "2026-04", "2026-04-01", or any parseable date
+     *        - DateTimeInterface: used directly
+     *        - null: uses current quarter
      * @return void
      * @throws PartitionException If partition column is not set
      */
-    public function quarterly(int $count = 8, ?int $startYear = null): void
+    public function quarterly(int $count = 8, int|string|DateTimeInterface|null $start = null): void
     {
         $this->ensurePartitionColumnSet();
         $this->partitionType = PartitionType::RANGE;
 
         $builder = DateRangeBuilder::quarterly()->count($count);
-        if ($startYear !== null) {
-            $builder->from("{$startYear}-01-01");
+        if ($start !== null) {
+            $builder->from($this->normalizeDate($start));
         }
 
         $this->dateRange($builder);

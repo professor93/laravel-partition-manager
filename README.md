@@ -177,6 +177,30 @@ Partition::create('logs', function($table) { /* ... */ })
 ->quarterly();         // 8 quarterly partitions
 ```
 
+#### Flexible Date Input
+
+All date parameters accept multiple formats:
+
+```php
+// Integer year
+->monthly(12, 2024);           // Starts from 2024-01-01
+->yearly(5, 2024);             // Starts from 2024-01-01
+
+// Partial date strings
+->monthly(12, '2024');         // Starts from 2024-01-01
+->monthly(12, '2024-06');      // Starts from 2024-06-01
+
+// Full date strings
+->monthly(12, '2024-06-15');   // Starts from 2024-06-01 (aligned to month)
+
+// DateTime/Carbon objects
+->monthly(12, new DateTime('2024-06-15'));
+->monthly(12, Carbon::now()->subMonth());
+
+// Start from today explicitly
+->monthly(12, fromToday: true);
+```
+
 ### Quick Generation for Existing Tables
 
 ```php
@@ -958,6 +982,53 @@ The macro:
 - Auto-generates type name as `{singular_table}_{column}_enum` if not specified
 - Handles duplicate type creation gracefully (won't error if type already exists)
 
+### Conditional (Partial) Indexes
+
+The `conditionalIndex` macro creates PostgreSQL partial indexes with WHERE clauses and optional column ordering. Follows Laravel's convention with columns first and optional auto-generated name:
+
+```php
+Schema::table('promo_codes', function (Blueprint $table) {
+    // Simple partial index with raw WHERE string (auto-generated name)
+    $table->conditionalIndex(['code'], "status = 'void'");
+    // Creates: promo_codes_code_idx
+
+    // With custom name
+    $table->conditionalIndex(['code'], "status = 'void'", 'idx_pc_void');
+
+    // Laravel-style closure for WHERE clause
+    $table->conditionalIndex(['source_type', 'source_id'], function ($query) {
+        $query->whereIn('status', ['new', 'dispensed'])
+              ->whereNotNull('source_type');
+    }, 'idx_pc_source');
+});
+
+Schema::table('user_daily_points', function (Blueprint $table) {
+    // Index with column ordering (no WHERE clause)
+    $table->conditionalIndex(['date', 'points' => 'DESC']);
+
+    // Alternative syntax: ordering in column string
+    $table->conditionalIndex(['date ASC', 'points DESC'], name: 'idx_udp_sorted');
+
+    // With closure and ordering
+    $table->conditionalIndex(
+        ['created_at' => 'DESC', 'score' => 'DESC'],
+        fn($q) => $q->where('status', 'active'),
+        'idx_active_users'
+    );
+
+    // Custom index method (e.g., GIN for JSONB columns)
+    $table->conditionalIndex(['metadata'], method: 'gin');
+});
+```
+
+Parameters:
+- `$columns`: Array of columns with optional ordering
+  - String value: column name (e.g., `'code'` or `'points DESC'`)
+  - Key-value: `'column' => 'ASC'` or `'column' => 'DESC'`
+- `$where`: Optional WHERE clause - raw string or Laravel-style closure
+- `$name`: Optional index name (auto-generated as `{table}_{columns}_idx` if null)
+- `$method`: Index method - `btree` (default), `hash`, `gist`, `gin`, `brin`
+
 ### Default Partitions
 
 Catch rows that don't match any defined partition:
@@ -1216,14 +1287,17 @@ Manage partition lifecycle with rotation policies:
 ```php
 use Uzbek\LaravelPartitionManager\Services\PartitionRotation;
 
-// Ensure future partitions exist
-PartitionRotation::ensureFuture('orders', 'created_at', 3, 'monthly');
+// Ensure future partitions exist (column and interval are auto-detected if omitted)
+$created = PartitionRotation::ensureFuture('orders', count: 3);
+$created = PartitionRotation::ensureFuture('orders', 3, 'created_at', 'monthly');
 
-// Rotate old partitions (drop older than threshold)
-$dropped = PartitionRotation::rotate('logs', new DateTime('-6 months'));
+// Rotate old partitions (keep only the most recent N partitions)
+$dropped = PartitionRotation::rotate('logs', keep: 12);
 
 // Add monthly partitions for an entire year
-PartitionRotation::addMonthlyForYear('orders', 2025, 'created_at');
+// Year accepts: int, string ("2025"), or DateTimeInterface
+PartitionRotation::addMonthlyForYear('orders', 'created_at', 2025);
+PartitionRotation::addMonthlyForYear('orders', 'created_at', '2025');
 ```
 
 ### PartitionIndex
@@ -1350,22 +1424,24 @@ PartitionType::fromPgStrategy('r')  // Returns PartitionType::RANGE
 
 // Adding multiple partitions at once (non-terminal)
 // All prefix parameters support % as placeholder for table name
+// All date parameters accept: int (year), string ("2024", "2024-01", "2024-01-15"), or DateTimeInterface
 ->addListPartitions(array $values, ?string $schema = null): self
 // Examples: ['new', 'void', 'used'] or [true => '%_active', false => '%_inactive']
 ->addHashPartitions(int $modulus, ?string $prefix = null, ?string $schema = null): self
 // Example: addHashPartitions(4, '%_shard_') creates: orders_shard_0, orders_shard_1, etc.
-->addMonthlyPartitions(int $count, ?string $startDate = null, ?string $prefix = null, ?string $schema = null): self
-->addYearlyPartitions(int $count, ?int $startYear = null, ?string $prefix = null, ?string $schema = null): self
-->addWeeklyPartitions(int $count, ?string $startDate = null, ?string $prefix = null, ?string $schema = null): self
-->addDailyPartitions(int $count, ?string $startDate = null, ?string $prefix = null, ?string $schema = null): self
+->addMonthlyPartitions(int $count, int|string|DateTimeInterface|null $start = null, ?string $prefix = null, ?string $schema = null, bool $fromToday = false): self
+->addYearlyPartitions(int $count, int|string|DateTimeInterface|null $start = null, ?string $prefix = null, ?string $schema = null, bool $fromToday = false): self
+->addWeeklyPartitions(int $count, int|string|DateTimeInterface|null $start = null, ?string $prefix = null, ?string $schema = null, bool $fromToday = false): self
+->addDailyPartitions(int $count, int|string|DateTimeInterface|null $start = null, ?string $prefix = null, ?string $schema = null, bool $fromToday = false): self
 ->dateRange(DateRangeBuilder $builder): self
 
 // Terminal methods (execute immediately, includes generate())
-->monthly(int $count = 12, ?string $startDate = null): void
-->yearly(int $count = 5, ?int $startYear = null): void
-->daily(int $count = 30, ?string $startDate = null): void
-->weekly(int $count = 12, ?string $startDate = null): void
-->quarterly(int $count = 8, ?int $startYear = null): void
+// All accept: int (year), string ("2024", "2024-01", "2024-01-15"), or DateTimeInterface
+->monthly(int $count = 12, int|string|DateTimeInterface|null $start = null, bool $fromToday = false): void
+->yearly(int $count = 5, int|string|DateTimeInterface|null $start = null, bool $fromToday = false): void
+->daily(int $count = 30, int|string|DateTimeInterface|null $start = null, bool $fromToday = false): void
+->weekly(int $count = 12, int|string|DateTimeInterface|null $start = null, bool $fromToday = false): void
+->quarterly(int $count = 8, int|string|DateTimeInterface|null $start = null, bool $fromToday = false): void
 
 // Schema management
 ->schema(string $schema): self
@@ -1404,11 +1480,12 @@ QuickPartitionBuilder::table(string $table): self
 ->connection(string $connection): self
 
 // Range partitions
-->monthly(int $count = 12, ?string $startDate = null): void
-->yearly(int $count = 5, ?int $startYear = null): void
-->daily(int $count = 30, ?string $startDate = null): void
-->weekly(int $count = 12, ?string $startDate = null): void
-->quarterly(int $count = 8, ?int $startYear = null): void
+// All accept: int (year), string ("2024", "2024-01", "2024-01-15"), or DateTimeInterface
+->monthly(int $count = 12, int|string|DateTimeInterface|null $start = null, bool $fromToday = false): void
+->yearly(int $count = 5, int|string|DateTimeInterface|null $start = null, bool $fromToday = false): void
+->daily(int $count = 30, int|string|DateTimeInterface|null $start = null, bool $fromToday = false): void
+->weekly(int $count = 12, int|string|DateTimeInterface|null $start = null, bool $fromToday = false): void
+->quarterly(int $count = 8, int|string|DateTimeInterface|null $start = null, bool $fromToday = false): void
 
 // List and hash
 ->byList(string $column, array $partitions): void
@@ -1424,12 +1501,13 @@ DateRangeBuilder::daily(): self
 DateRangeBuilder::weekly(): self
 DateRangeBuilder::quarterly(): self
 
-->from(DateTime|string $date): self
-->to(DateTime|string $date): self
+// Date parameters accept: int (year), string ("2024", "2024-01", "2024-01-15"), or DateTimeInterface
+->from(int|string|DateTimeInterface $date): self
+->to(int|string|DateTimeInterface $date): self
 ->count(int $count): self
 ->interval(string $interval): self
 ->nameFormat(string $format): self
-->defaultSchema(string $schema): self
+->schema(string $schema): self
 ->build(string $prefix = ''): array
 ```
 
@@ -1460,11 +1538,12 @@ SubPartitionBuilder::hash(string $column): HashSubPartitionBuilder
 //   ->addListPartitions(['false' => 'inactive', 'true' => 'active'])  // casts based on column type (auto-detected)
 
 // RangeSubPartitionBuilder
+// All date parameters accept: int (year), string ("2024", "2024-01", "2024-01-15"), or DateTimeInterface
 ->addRangePartition(string $name, mixed $from, mixed $to, ?string $schema = null, ?AbstractSubPartitionBuilder $subPartitions = null): self
-->addYearlyPartitions(int $count, string|Carbon|null $startDate = null, ?string $prefix = null, ?string $schema = null): self
-->addMonthlyPartitions(int $count, string|Carbon|null $startDate = null, ?string $prefix = null, ?string $schema = null): self
-->addWeeklyPartitions(int $count, string|Carbon|null $startDate = null, ?string $prefix = null, ?string $schema = null): self
-->addDailyPartitions(int $count, string|Carbon|null $startDate = null, ?string $prefix = null, ?string $schema = null): self
+->addYearlyPartitions(int $count, int|string|DateTimeInterface|null $start = null, ?string $prefix = null, ?string $schema = null, bool $fromToday = false): self
+->addMonthlyPartitions(int $count, int|string|DateTimeInterface|null $start = null, ?string $prefix = null, ?string $schema = null, bool $fromToday = false): self
+->addWeeklyPartitions(int $count, int|string|DateTimeInterface|null $start = null, ?string $prefix = null, ?string $schema = null, bool $fromToday = false): self
+->addDailyPartitions(int $count, int|string|DateTimeInterface|null $start = null, ?string $prefix = null, ?string $schema = null, bool $fromToday = false): self
 // If prefix is null, auto-generates using baseName: {baseName}_y, {baseName}_m, {baseName}_w, {baseName}_d
 
 // HashSubPartitionBuilder

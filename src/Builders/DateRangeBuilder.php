@@ -6,11 +6,14 @@ namespace Uzbek\LaravelPartitionManager\Builders;
 
 use DateInterval;
 use DateTime;
+use DateTimeInterface;
+use Uzbek\LaravelPartitionManager\Traits\DateNormalizer;
 use Uzbek\LaravelPartitionManager\ValueObjects\PartitionDefinition;
 use Uzbek\LaravelPartitionManager\ValueObjects\RangePartition;
 
 class DateRangeBuilder
 {
+    use DateNormalizer;
     protected ?DateTime $startDate = null;
 
     protected ?DateTime $endDate = null;
@@ -58,16 +61,32 @@ class DateRangeBuilder
         return (new self())->interval('quarterly');
     }
 
-    public function from(DateTime|string $date): self
+    /**
+     * Set the start date.
+     *
+     * @param int|string|DateTimeInterface $date Starting date. Accepts:
+     *        - int: year (2026 → 2026-01-01)
+     *        - string: "2026", "2026-01", "2026-01-15", or any parseable date
+     *        - DateTimeInterface: used directly
+     */
+    public function from(int|string|DateTimeInterface $date): self
     {
-        $this->startDate = $date instanceof DateTime ? $date : new DateTime($date);
+        $this->startDate = $this->normalizeDate($date);
 
         return $this;
     }
 
-    public function to(DateTime|string $date): self
+    /**
+     * Set the end date.
+     *
+     * @param int|string|DateTimeInterface $date End date. Accepts:
+     *        - int: year (2026 → 2026-01-01)
+     *        - string: "2026", "2026-01", "2026-01-15", or any parseable date
+     *        - DateTimeInterface: used directly
+     */
+    public function to(int|string|DateTimeInterface $date): self
     {
-        $this->endDate = $date instanceof DateTime ? $date : new DateTime($date);
+        $this->endDate = $this->normalizeDate($date);
 
         return $this;
     }

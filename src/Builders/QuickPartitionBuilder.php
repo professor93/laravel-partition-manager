@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Uzbek\LaravelPartitionManager\Builders;
 
 use DateTime;
+use DateTimeInterface;
 use Uzbek\LaravelPartitionManager\Enums\PartitionType;
 use Uzbek\LaravelPartitionManager\Services\SchemaCreator;
 use Uzbek\LaravelPartitionManager\Traits\BuilderHelper;
+use Uzbek\LaravelPartitionManager\Traits\DateNormalizer;
 use Uzbek\LaravelPartitionManager\Traits\SqlHelper;
 use Illuminate\Database\Connection;
 
@@ -15,6 +17,7 @@ class QuickPartitionBuilder
 {
     use SqlHelper;
     use BuilderHelper;
+    use DateNormalizer;
 
     protected PartitionType $partitionType = PartitionType::RANGE;
 
@@ -64,34 +67,89 @@ class QuickPartitionBuilder
         return $this;
     }
 
-    public function monthly(int $count = 12, ?string $startDate = null): void
+    /**
+     * Generate monthly partitions.
+     *
+     * @param int $count Number of partitions to create
+     * @param int|string|DateTimeInterface|null $start Starting date. Accepts:
+     *        - int: year (2026 → 2026-01-01)
+     *        - string: "2026", "2026-01", "2026-01-15", or any parseable date
+     *        - DateTimeInterface: used directly
+     *        - null: uses current month
+     * @param bool $fromToday If true and start is null, explicitly start from today
+     */
+    public function monthly(int $count = 12, int|string|DateTimeInterface|null $start = null, bool $fromToday = false): void
     {
         $this->partitionType = PartitionType::RANGE;
-        $this->generateMonthly($count, $startDate);
+        $this->generateMonthly($count, $start, $fromToday);
     }
 
-    public function yearly(int $count = 5, ?string $startDate = null): void
+    /**
+     * Generate yearly partitions.
+     *
+     * @param int $count Number of partitions to create
+     * @param int|string|DateTimeInterface|null $start Starting date. Accepts:
+     *        - int: year (2026 → 2026-01-01)
+     *        - string: "2026", "2026-06", "2026-06-01", or any parseable date
+     *        - DateTimeInterface: used directly
+     *        - null: uses current date
+     * @param bool $fromToday If true and start is null, explicitly start from today
+     */
+    public function yearly(int $count = 5, int|string|DateTimeInterface|null $start = null, bool $fromToday = false): void
     {
         $this->partitionType = PartitionType::RANGE;
-        $this->generateYearly($count, $startDate);
+        $this->generateYearly($count, $start, $fromToday);
     }
 
-    public function daily(int $count = 30, ?string $startDate = null): void
+    /**
+     * Generate daily partitions.
+     *
+     * @param int $count Number of partitions to create
+     * @param int|string|DateTimeInterface|null $start Starting date. Accepts:
+     *        - int: year (2026 → 2026-01-01)
+     *        - string: "2026", "2026-01", "2026-01-15", or any parseable date
+     *        - DateTimeInterface: used directly
+     *        - null: uses current date
+     * @param bool $fromToday If true and start is null, explicitly start from today
+     */
+    public function daily(int $count = 30, int|string|DateTimeInterface|null $start = null, bool $fromToday = false): void
     {
         $this->partitionType = PartitionType::RANGE;
-        $this->generateDaily($count, $startDate);
+        $this->generateDaily($count, $start, $fromToday);
     }
 
-    public function weekly(int $count = 12, ?string $startDate = null): void
+    /**
+     * Generate weekly partitions.
+     *
+     * @param int $count Number of partitions to create
+     * @param int|string|DateTimeInterface|null $start Starting date. Accepts:
+     *        - int: year (2026 → 2026-01-01, aligned to Monday)
+     *        - string: "2026", "2026-01", "2026-01-15", or any parseable date
+     *        - DateTimeInterface: used directly
+     *        - null: uses current week's Monday
+     * @param bool $fromToday If true and start is null, explicitly start from today's week
+     */
+    public function weekly(int $count = 12, int|string|DateTimeInterface|null $start = null, bool $fromToday = false): void
     {
         $this->partitionType = PartitionType::RANGE;
-        $this->generateWeekly($count, $startDate);
+        $this->generateWeekly($count, $start, $fromToday);
     }
 
-    public function quarterly(int $count = 8, ?string $startDate = null): void
+    /**
+     * Generate quarterly partitions.
+     *
+     * @param int $count Number of partitions to create
+     * @param int|string|DateTimeInterface|null $start Starting date. Accepts:
+     *        - int: year (2026 → 2026-01-01)
+     *        - string: "2026", "2026-04", "2026-04-01", or any parseable date
+     *        - DateTimeInterface: used directly
+     *        - null: uses current quarter
+     * @param bool $fromToday If true and start is null, explicitly start from today
+     */
+    public function quarterly(int $count = 8, int|string|DateTimeInterface|null $start = null, bool $fromToday = false): void
     {
         $this->partitionType = PartitionType::RANGE;
-        $this->generateQuarterly($count, $startDate);
+        $this->generateQuarterly($count, $start, $fromToday);
     }
 
     /**
@@ -111,16 +169,15 @@ class QuickPartitionBuilder
         $this->generateHash($count);
     }
 
-    protected function generateMonthly(int $count, ?string $startDate): void
+    protected function generateMonthly(int $count, int|string|DateTimeInterface|null $start, bool $fromToday = false): void
     {
         $this->ensurePartitionColumnSet();
 
         $connection = $this->getConnection();
-        $start = $startDate !== null ? new DateTime($startDate) : new DateTime();
-        $start->modify('first day of this month');
+        $startDate = $this->normalizeDateForInterval($start, 'monthly', $fromToday);
 
         for ($i = 0; $i < $count; $i++) {
-            $current = clone $start;
+            $current = clone $startDate;
             $current->modify("+{$i} months");
             $next = clone $current;
             $next->modify('+1 month');
@@ -135,15 +192,15 @@ class QuickPartitionBuilder
         }
     }
 
-    protected function generateYearly(int $count, ?string $startDate): void
+    protected function generateYearly(int $count, int|string|DateTimeInterface|null $start, bool $fromToday = false): void
     {
         $this->ensurePartitionColumnSet();
 
         $connection = $this->getConnection();
-        $start = $startDate !== null ? new DateTime($startDate) : new DateTime();
+        $startDate = $this->normalizeDateForInterval($start, 'yearly', $fromToday);
 
         for ($i = 0; $i < $count; $i++) {
-            $current = clone $start;
+            $current = clone $startDate;
             $current->modify("+{$i} years");
             $next = clone $current;
             $next->modify('+1 year');
@@ -158,15 +215,15 @@ class QuickPartitionBuilder
         }
     }
 
-    protected function generateDaily(int $count, ?string $startDate): void
+    protected function generateDaily(int $count, int|string|DateTimeInterface|null $start, bool $fromToday = false): void
     {
         $this->ensurePartitionColumnSet();
 
         $connection = $this->getConnection();
-        $start = $startDate !== null ? new DateTime($startDate) : new DateTime();
+        $startDate = $this->normalizeDateForInterval($start, 'daily', $fromToday);
 
         for ($i = 0; $i < $count; $i++) {
-            $current = clone $start;
+            $current = clone $startDate;
             $current->modify("+{$i} days");
             $next = clone $current;
             $next->modify('+1 day');
@@ -181,16 +238,15 @@ class QuickPartitionBuilder
         }
     }
 
-    protected function generateWeekly(int $count, ?string $startDate): void
+    protected function generateWeekly(int $count, int|string|DateTimeInterface|null $start, bool $fromToday = false): void
     {
         $this->ensurePartitionColumnSet();
 
         $connection = $this->getConnection();
-        $start = $startDate !== null ? new DateTime($startDate) : new DateTime();
-        $start->modify('monday this week');
+        $startDate = $this->normalizeDateForInterval($start, 'weekly', $fromToday);
 
         for ($i = 0; $i < $count; $i++) {
-            $current = clone $start;
+            $current = clone $startDate;
             $current->modify("+{$i} weeks");
             $next = clone $current;
             $next->modify('+1 week');
@@ -205,25 +261,15 @@ class QuickPartitionBuilder
         }
     }
 
-    protected function generateQuarterly(int $count, ?string $startDate): void
+    protected function generateQuarterly(int $count, int|string|DateTimeInterface|null $start, bool $fromToday = false): void
     {
         $this->ensurePartitionColumnSet();
 
         $connection = $this->getConnection();
-        $start = $startDate !== null ? new DateTime($startDate) : new DateTime();
-
-        // Align to first day of the current quarter
-        $month = (int) $start->format('n');
-        $quarterStart = match (true) {
-            $month <= 3 => 1,
-            $month <= 6 => 4,
-            $month <= 9 => 7,
-            default => 10,
-        };
-        $start->setDate((int) $start->format('Y'), $quarterStart, 1);
+        $startDate = $this->normalizeDateForInterval($start, 'quarterly', $fromToday);
 
         for ($i = 0; $i < $count; $i++) {
-            $current = clone $start;
+            $current = clone $startDate;
             $current->modify("+{$i} quarters");
             $next = clone $current;
             $next->modify('+3 months');

@@ -12,6 +12,9 @@ abstract class AbstractSubPartitionBuilder
     /** @var array<int, SubPartition> */
     protected array $partitions = [];
 
+    /** @var array<int, array<string, mixed>> Deferred partition configurations */
+    protected array $deferredPartitions = [];
+
     protected ?string $schema = null;
 
     protected ?string $baseName = null;
@@ -49,6 +52,9 @@ abstract class AbstractSubPartitionBuilder
     {
         $this->baseName = $baseName;
 
+        // Generate any deferred partitions now that we have a baseName
+        $this->generateDeferredPartitions();
+
         return $this;
     }
 
@@ -83,6 +89,9 @@ abstract class AbstractSubPartitionBuilder
      */
     public function getPartitions(): array
     {
+        // Generate any remaining deferred partitions
+        $this->generateDeferredPartitions();
+
         return $this->partitions;
     }
 
@@ -104,6 +113,9 @@ abstract class AbstractSubPartitionBuilder
      */
     public function toArray(?string $parentSchema = null): array
     {
+        // Generate any remaining deferred partitions before converting to array
+        $this->generateDeferredPartitions();
+
         $effectiveSchema = $this->schema ?? $parentSchema;
 
         return [
@@ -144,5 +156,24 @@ abstract class AbstractSubPartitionBuilder
         }
 
         return $prefix;
+    }
+
+    /**
+     * Add a deferred partition configuration.
+     * Subclasses call this when they can't generate partitions immediately.
+     *
+     * @param array<string, mixed> $config
+     */
+    protected function addDeferredPartition(array $config): void
+    {
+        $this->deferredPartitions[] = $config;
+    }
+
+    /**
+     * Generate deferred partitions. Subclasses must implement this.
+     */
+    protected function generateDeferredPartitions(): void
+    {
+        // Subclasses implement this to handle their specific deferred partition types
     }
 }

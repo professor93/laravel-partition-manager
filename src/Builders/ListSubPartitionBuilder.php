@@ -58,6 +58,32 @@ class ListSubPartitionBuilder extends AbstractSubPartitionBuilder
      */
     public function addListPartitions(array $values, ?string $schema = null): self
     {
+        // Check if this is a simple array format (sequential integer keys)
+        $isSimpleArray = array_keys($values) === range(0, count($values) - 1);
+
+        // If simple array format and baseName is not yet set, defer partition creation
+        if ($isSimpleArray && $this->baseName === null) {
+            $this->addDeferredPartition([
+                'type' => 'list_batch',
+                'values' => $values,
+                'schema' => $schema,
+            ]);
+
+            return $this;
+        }
+
+        $this->createListPartitions($values, $schema);
+
+        return $this;
+    }
+
+    /**
+     * Actually create list partitions.
+     *
+     * @param array<mixed> $values
+     */
+    private function createListPartitions(array $values, ?string $schema): void
+    {
         foreach ($values as $key => $value) {
             if (is_int($key)) {
                 // Simple array format: ['new', 'void', 'used']
@@ -75,8 +101,25 @@ class ListSubPartitionBuilder extends AbstractSubPartitionBuilder
             $this->applySchema($partition, $schema);
             $this->partitions[] = $partition;
         }
+    }
 
-        return $this;
+    /**
+     * Generate deferred list partitions.
+     */
+    protected function generateDeferredPartitions(): void
+    {
+        if (empty($this->deferredPartitions)) {
+            return;
+        }
+
+        $deferred = $this->deferredPartitions;
+        $this->deferredPartitions = [];
+
+        foreach ($deferred as $config) {
+            if ($config['type'] === 'list_batch') {
+                $this->createListPartitions($config['values'], $config['schema']);
+            }
+        }
     }
 
     /**

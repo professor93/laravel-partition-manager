@@ -50,10 +50,31 @@ class HashSubPartitionBuilder extends AbstractSubPartitionBuilder
      */
     public function addHashPartitions(int $modulus, ?string $prefix = null, ?string $schema = null): self
     {
-        // Auto-generate prefix if not provided, or resolve % placeholder
+        // If prefix is null and baseName is not yet set, defer partition creation
+        if ($prefix === null && $this->baseName === null) {
+            $this->addDeferredPartition([
+                'type' => 'hash_batch',
+                'modulus' => $modulus,
+                'schema' => $schema,
+            ]);
+
+            return $this;
+        }
+
+        // Generate partitions immediately
+        $this->createHashPartitions($modulus, $prefix, $schema);
+
+        return $this;
+    }
+
+    /**
+     * Actually create the hash partitions.
+     */
+    private function createHashPartitions(int $modulus, ?string $prefix, ?string $schema): void
+    {
         $resolvedPrefix = $prefix !== null
             ? $this->resolvePrefix($prefix)
-            : ($this->baseName !== null ? "{$this->baseName}_p" : 'p');
+            : "{$this->baseName}_p";
 
         for ($remainder = 0; $remainder < $modulus; $remainder++) {
             $name = $resolvedPrefix . $remainder;
@@ -62,7 +83,28 @@ class HashSubPartitionBuilder extends AbstractSubPartitionBuilder
             $this->applySchema($partition, $schema);
             $this->partitions[] = $partition;
         }
+    }
 
-        return $this;
+    /**
+     * Generate deferred hash partitions.
+     */
+    protected function generateDeferredPartitions(): void
+    {
+        if (empty($this->deferredPartitions)) {
+            return;
+        }
+
+        $deferred = $this->deferredPartitions;
+        $this->deferredPartitions = [];
+
+        foreach ($deferred as $config) {
+            if ($config['type'] === 'hash_batch') {
+                $this->createHashPartitions(
+                    $config['modulus'],
+                    null,
+                    $config['schema']
+                );
+            }
+        }
     }
 }

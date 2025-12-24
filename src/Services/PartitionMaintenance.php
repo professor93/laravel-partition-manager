@@ -15,22 +15,40 @@ class PartitionMaintenance
 {
     use SqlHelper;
 
+    /** @var bool Whether we're in dry-run mode (collect SQL instead of executing) */
+    private static bool $dryRunMode = false;
+
+    /** @var array<int, string> Collected SQL queries during dry-run */
+    private static array $dryRunQueries = [];
+
+    /**
+     * Execute a SQL statement or collect it in dry-run mode.
+     */
+    private static function executeStatement(string $sql): void
+    {
+        if (self::$dryRunMode) {
+            self::$dryRunQueries[] = $sql;
+        } else {
+            DB::statement($sql);
+        }
+    }
+
     public static function vacuum(string $partition, bool $full = false, bool $analyze = false): void
     {
         $quotedPartition = self::quoteIdentifier($partition);
 
         if ($full) {
-            DB::statement("VACUUM FULL {$quotedPartition}");
+            self::executeStatement("VACUUM FULL {$quotedPartition}");
         } elseif ($analyze) {
-            DB::statement("VACUUM ANALYZE {$quotedPartition}");
+            self::executeStatement("VACUUM ANALYZE {$quotedPartition}");
         } else {
-            DB::statement("VACUUM {$quotedPartition}");
+            self::executeStatement("VACUUM {$quotedPartition}");
         }
     }
 
     public static function analyze(string $partition): void
     {
-        DB::statement("ANALYZE " . self::quoteIdentifier($partition));
+        self::executeStatement("ANALYZE " . self::quoteIdentifier($partition));
     }
 
     public static function vacuumAll(string $table, bool $full = false, bool $analyze = false): void
@@ -53,7 +71,7 @@ class PartitionMaintenance
         $sql = $concurrently
             ? "REINDEX TABLE CONCURRENTLY {$quotedPartition}"
             : "REINDEX TABLE {$quotedPartition}";
-        DB::statement($sql);
+        self::executeStatement($sql);
     }
 
     public static function reindexAll(string $table, bool $concurrently = false): void
@@ -265,22 +283,38 @@ class PartitionMaintenance
         return $commands;
     }
 
+    /**
+     * Execute a callback in dry-run mode, collecting SQL statements instead of executing them.
+     *
+     * Note: This works for vacuum, analyze, and reindex operations which cannot run inside
+     * a transaction. For other operations that use DB::statement() directly, the queries
+     * will still be executed.
+     *
+     * @param callable $callback The callback containing maintenance operations
+     * @return array<int, string> The collected SQL statements
+     */
     public static function dryRun(callable $callback): array
     {
-        $queries = [];
-
-        DB::listen(function ($query) use (&$queries) {
-            $queries[] = $query->sql;
-        });
-
-        DB::beginTransaction();
+        self::$dryRunMode = true;
+        self::$dryRunQueries = [];
 
         try {
             $callback();
         } finally {
-            DB::rollBack();
+            self::$dryRunMode = false;
         }
 
+        $queries = self::$dryRunQueries;
+        self::$dryRunQueries = [];
+
         return $queries;
+    }
+
+    /**
+     * Check if currently in dry-run mode.
+     */
+    public static function isDryRun(): bool
+    {
+        return self::$dryRunMode;
     }
 }

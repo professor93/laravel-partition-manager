@@ -205,14 +205,19 @@ class PartitionSplitter
                 DB::statement("CREATE SCHEMA IF NOT EXISTS " . self::quoteIdentifier($schema));
             }
 
+            // Create all partitions first and attach them
             foreach ($newPartitions as $name => $range) {
                 $fullName = $schema ? "{$schema}.{$name}" : $name;
                 $quotedNew = self::quoteIdentifier($fullName);
+                $fromValue = self::formatSqlValue($range['from']);
+                $toValue = self::formatSqlValue($range['to']);
 
                 DB::statement("CREATE TABLE {$quotedNew} (LIKE {$quotedTable} INCLUDING ALL)");
-                DB::statement("INSERT INTO {$quotedNew} SELECT * FROM {$quotedSource}");
-                DB::statement("ALTER TABLE {$quotedTable} ATTACH PARTITION {$quotedNew} FOR VALUES FROM ('{$range['from']}') TO ('{$range['to']}')");
+                DB::statement("ALTER TABLE {$quotedTable} ATTACH PARTITION {$quotedNew} FOR VALUES FROM ({$fromValue}) TO ({$toValue})");
             }
+
+            // Insert data through parent - PostgreSQL routes to correct partitions
+            DB::statement("INSERT INTO {$quotedTable} SELECT * FROM {$quotedSource}");
 
             DB::statement("DROP TABLE {$quotedSource}");
         });

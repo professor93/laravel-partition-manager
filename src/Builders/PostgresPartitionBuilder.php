@@ -7,8 +7,12 @@ namespace Uzbek\LaravelPartitionManager\Builders;
 use Carbon\Carbon;
 use Exception;
 use Uzbek\LaravelPartitionManager\Enums\PartitionType;
+use Uzbek\LaravelPartitionManager\Exceptions\InvalidPartitionTypeException;
+use Uzbek\LaravelPartitionManager\Exceptions\PartitionColumnException;
+use Uzbek\LaravelPartitionManager\Exceptions\PartitionDatabaseException;
 use Uzbek\LaravelPartitionManager\Exceptions\PartitionException;
 use Uzbek\LaravelPartitionManager\Services\PartitionSchemaManager;
+use Uzbek\LaravelPartitionManager\Templates\PartitionTemplate;
 use Uzbek\LaravelPartitionManager\Services\SchemaCreator;
 use Uzbek\LaravelPartitionManager\Traits\BuilderHelper;
 use Uzbek\LaravelPartitionManager\Traits\SqlHelper;
@@ -31,6 +35,11 @@ class PostgresPartitionBuilder
     protected ?PartitionType $partitionType = null;
 
     protected ?string $partitionColumn = null;
+
+    /**
+     * Whether the partition column is a raw SQL expression (already formatted).
+     */
+    protected bool $partitionColumnIsExpression = false;
 
     /** @var array<int, PartitionDefinition> */
     protected array $partitions = [];
@@ -78,6 +87,31 @@ class PostgresPartitionBuilder
         return $this;
     }
 
+    /**
+     * Apply a partition template to this builder.
+     *
+     * Templates can be defined in config/partition-manager.php under 'templates' key,
+     * or created programmatically using PartitionTemplate::define().
+     *
+     * The % placeholder in template values (schema, prefix) is replaced with the table name.
+     *
+     * @param string|PartitionTemplate $template Template name or PartitionTemplate instance
+     * @param array<string, mixed> $overrides Optional overrides for template values
+     * @return self
+     */
+    public function fromTemplate(string|PartitionTemplate $template, array $overrides = []): self
+    {
+        if (is_string($template)) {
+            $template = PartitionTemplate::fromConfig($template);
+        }
+
+        if (!empty($overrides)) {
+            $template = $template->merge($overrides);
+        }
+
+        return $template->applyTo($this, $this->table);
+    }
+
     public function partition(PartitionType|string $type): self
     {
         $this->partitionType = $type instanceof PartitionType
@@ -105,42 +139,67 @@ class PostgresPartitionBuilder
     /**
      * Set the partition column(s).
      *
+     * Column names are automatically quoted to prevent SQL injection.
+     *
      * @param string|array<int, string> $columns Single column name or array of column names
      * @return self
      */
     public function by(string|array $columns): self
     {
-        $this->partitionColumn = is_array($columns)
-            ? implode(', ', $columns)
-            : $columns;
+        if (is_array($columns)) {
+            $quotedColumns = array_map(
+                static fn(string $col): string => self::quoteIdentifier($col),
+                $columns
+            );
+            $this->partitionColumn = implode(', ', $quotedColumns);
+        } else {
+            $this->partitionColumn = self::quoteIdentifier($columns);
+        }
+
+        $this->partitionColumnIsExpression = false;
 
         return $this;
     }
 
+    /**
+     * Set a raw SQL expression as the partition column.
+     *
+     * WARNING: The expression is used as-is. Ensure it's properly sanitized.
+     *
+     * @param string $expression Raw SQL expression (e.g., "DATE_TRUNC('month', created_at)")
+     * @return self
+     */
     public function partitionByExpression(string $expression): self
     {
         $this->partitionColumn = $expression;
+        $this->partitionColumnIsExpression = true;
 
         return $this;
     }
 
     public function partitionByYear(string $column): self
     {
-        $this->partitionColumn = "EXTRACT(YEAR FROM {$column})";
+        $quotedColumn = self::quoteIdentifier($column);
+        $this->partitionColumn = "EXTRACT(YEAR FROM {$quotedColumn})";
+        $this->partitionColumnIsExpression = true;
 
         return $this;
     }
 
     public function partitionByMonth(string $column): self
     {
-        $this->partitionColumn = "DATE_TRUNC('month', {$column})";
+        $quotedColumn = self::quoteIdentifier($column);
+        $this->partitionColumn = "DATE_TRUNC('month', {$quotedColumn})";
+        $this->partitionColumnIsExpression = true;
 
         return $this;
     }
 
     public function partitionByDay(string $column): self
     {
-        $this->partitionColumn = "DATE_TRUNC('day', {$column})";
+        $quotedColumn = self::quoteIdentifier($column);
+        $this->partitionColumn = "DATE_TRUNC('day', {$quotedColumn})";
+        $this->partitionColumnIsExpression = true;
 
         return $this;
     }
@@ -737,7 +796,9 @@ class PostgresPartitionBuilder
      * This executes the table creation in a transaction.
      *
      * @return void
-     * @throws PartitionException If table creation fails
+     * @throws PartitionDatabaseException If table creation fails
+     * @throws PartitionColumnException If partition column is not set
+     * @throws InvalidPartitionTypeException If partition type is not set
      */
     public function generate(): void
     {
@@ -766,7 +827,7 @@ class PostgresPartitionBuilder
             $connection->commit();
         } catch (Exception $e) {
             $connection->rollBack();
-            throw new PartitionException(
+            throw new PartitionDatabaseException(
                 "Failed to create partitioned table: " . $e->getMessage(),
                 previous: $e
             );
@@ -788,13 +849,13 @@ class PostgresPartitionBuilder
         }
 
         if ($this->partitionColumn === null) {
-            throw new PartitionException(
+            throw new PartitionColumnException(
                 "Partition column not specified. Use by() to set the partition column."
             );
         }
 
         if ($this->partitionType === null) {
-            throw new PartitionException(
+            throw new InvalidPartitionTypeException(
                 "Partition type not specified. Use addRangePartition(), addListPartition(), or addHashPartition() to add partitions."
             );
         }

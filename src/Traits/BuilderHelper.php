@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Uzbek\LaravelPartitionManager\Traits;
 
-use Uzbek\LaravelPartitionManager\Exceptions\PartitionException;
+use Uzbek\LaravelPartitionManager\Exceptions\PartitionColumnException;
 use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\DB;
 
@@ -33,14 +33,14 @@ trait BuilderHelper
     /**
      * Ensure partition column is set before generating partitions.
      *
-     * @throws PartitionException If partition column is not set
+     * @throws PartitionColumnException If partition column is not set
      */
     protected function ensurePartitionColumnSet(): void
     {
         $column = $this->partitionColumn ?? '';
 
         if ($column === '') {
-            throw new PartitionException(
+            throw new PartitionColumnException(
                 "Partition column not specified. Use by() method first."
             );
         }

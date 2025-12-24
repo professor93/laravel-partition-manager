@@ -16,8 +16,8 @@ class PartitionRotation
     public static function ensureFuture(
         string $table,
         string $column,
-        string $interval = 'monthly',
         int $count = 3,
+        string $interval = 'monthly',
         ?string $schema = null
     ): int {
         $existingBoundaries = PartitionStats::boundaries($table);

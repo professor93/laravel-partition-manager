@@ -12,6 +12,10 @@ use Illuminate\Support\Facades\DB;
  * Service for PostgreSQL schema management.
  *
  * Handles schema creation for partitions with caching to avoid duplicate queries.
+ *
+ * IMPORTANT: For long-running processes (Swoole, Octane, RoadRunner), the cache
+ * is automatically cleared between requests via the service provider. If you're
+ * using a custom worker, call SchemaCreator::flush() between requests.
  */
 class SchemaCreator
 {
@@ -23,6 +27,11 @@ class SchemaCreator
      * @var array<string, bool>
      */
     protected static array $createdSchemas = [];
+
+    /**
+     * Whether cache flushing is enabled (for long-running processes).
+     */
+    protected static bool $flushEnabled = true;
 
     /**
      * Ensure a schema exists, creating it if necessary.
@@ -68,13 +77,52 @@ class SchemaCreator
     /**
      * Clear the created schemas cache.
      *
-     * Useful for testing or when you need to force re-checking schemas.
+     * This method should be called between requests in long-running processes
+     * (Swoole, Octane, RoadRunner) to prevent stale cache issues.
      *
+     * The service provider automatically registers this for Laravel Octane.
+     *
+     * @return void
+     */
+    public static function flush(): void
+    {
+        if (self::$flushEnabled) {
+            self::$createdSchemas = [];
+        }
+    }
+
+    /**
+     * Clear the created schemas cache.
+     *
+     * @deprecated Use flush() instead
      * @return void
      */
     public static function clearCache(): void
     {
         self::$createdSchemas = [];
+    }
+
+    /**
+     * Enable or disable automatic cache flushing.
+     *
+     * @param bool $enabled Whether to enable flushing
+     * @return void
+     */
+    public static function setFlushEnabled(bool $enabled): void
+    {
+        self::$flushEnabled = $enabled;
+    }
+
+    /**
+     * Check if the cache contains a specific schema.
+     *
+     * @param string $schema The schema name
+     * @param Connection|null $connection The database connection
+     * @return bool Whether the schema is in the cache
+     */
+    public static function isCached(string $schema, ?Connection $connection = null): bool
+    {
+        return isset(self::$createdSchemas[self::getCacheKey($schema, $connection)]);
     }
 
     /**

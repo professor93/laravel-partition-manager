@@ -211,4 +211,64 @@ return [
 
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Partition Templates
+    |--------------------------------------------------------------------------
+    |
+    | Define reusable partition configurations that can be applied to multiple
+    | tables. Templates reduce code duplication and ensure consistency across
+    | similar tables (e.g., all time-series tables, all tenant tables).
+    |
+    | Template values support the % placeholder which is replaced with the
+    | table name. For example, schema '%_archive' for table 'orders' becomes
+    | 'orders_archive'.
+    |
+    | Usage in migrations:
+    |     Partition::create('orders', fn($t) => $t->id())
+    |         ->fromTemplate('monthly_archive')
+    |         ->generate();
+    |
+    */
+
+    'templates' => [
+
+        // Example: Monthly partitioned table with archive schema
+        // 'monthly_archive' => [
+        //     'type' => 'range',              // range, list, or hash
+        //     'column' => 'created_at',       // partition column
+        //     'interval' => 'monthly',        // daily, weekly, monthly, yearly
+        //     'count' => 12,                  // number of partitions
+        //     'schema' => '%_archive',        // schema with % placeholder
+        //     'default_partition' => true,    // create DEFAULT partition
+        //     'future_partitions' => 3,       // additional future partitions
+        // ],
+
+        // Example: Hash partitioned multi-tenant table
+        // 'tenant_hash' => [
+        //     'type' => 'hash',
+        //     'column' => 'tenant_id',
+        //     'modulus' => 16,                // number of hash buckets
+        //     'schema' => 'tenants',
+        // ],
+
+        // Example: Yearly partitioned cold storage table
+        // 'yearly_cold_storage' => [
+        //     'type' => 'range',
+        //     'column' => 'created_at',
+        //     'interval' => 'yearly',
+        //     'count' => 5,
+        //     'tablespace' => 'cold_storage', // PostgreSQL tablespace
+        // ],
+
+        // Example: List partitioned by status
+        // 'status_list' => [
+        //     'type' => 'list',
+        //     'column' => 'status',
+        //     'values' => ['pending', 'active', 'completed', 'cancelled'],
+        //     'default_partition' => true,
+        // ],
+
+    ],
+
 ];

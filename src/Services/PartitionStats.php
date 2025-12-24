@@ -27,6 +27,44 @@ class PartitionStats
         ", [$table]);
     }
 
+    /**
+     * Get size and row count for a specific partition.
+     */
+    public static function partitionSize(string $partitionName): object
+    {
+        $result = DB::select("
+            SELECT
+                c.reltuples::bigint AS row_count,
+                pg_total_relation_size(c.oid) AS size_bytes,
+                pg_size_pretty(pg_total_relation_size(c.oid)) AS size
+            FROM pg_class c
+            WHERE c.relname = ?
+            OR c.oid = ?::regclass
+            LIMIT 1
+        ", [preg_replace('/^[^.]+\./', '', $partitionName), $partitionName]);
+
+        return $result[0] ?? (object) ['row_count' => null, 'size_bytes' => null, 'size' => null];
+    }
+
+    /**
+     * Get the partition strategy for a table.
+     */
+    public static function getPartitionStrategy(string $table): ?string
+    {
+        $result = DB::select("
+            SELECT
+                CASE partstrat
+                    WHEN 'r' THEN 'RANGE'
+                    WHEN 'l' THEN 'LIST'
+                    WHEN 'h' THEN 'HASH'
+                END AS strategy
+            FROM pg_partitioned_table
+            WHERE partrelid = ?::regclass
+        ", [$table]);
+
+        return $result[0]->strategy ?? null;
+    }
+
     public static function boundaries(string $table): array
     {
         $partitions = Partition::getPartitions($table);
@@ -46,25 +84,79 @@ class PartitionStats
         return $result;
     }
 
+    /**
+     * Parse partition boundary expression into structured data.
+     *
+     * Handles various PostgreSQL partition expression formats:
+     * - RANGE: FROM (value) TO (value) - with strings, numbers, MINVALUE, MAXVALUE, multi-column
+     * - LIST: IN (values)
+     * - HASH: WITH (modulus N, remainder N)
+     * - DEFAULT
+     *
+     * @param string $expression The partition expression from pg_get_expr
+     * @return array<string, mixed>|null Parsed boundary data or null if unrecognized
+     */
     public static function parseBoundaries(string $expression): ?array
     {
-        if (preg_match("/FOR VALUES FROM \('([^']+)'\) TO \('([^']+)'\)/i", $expression, $matches)) {
-            return ['type' => 'RANGE', 'from' => $matches[1], 'to' => $matches[2]];
+        // Handle RANGE partitions - match everything between FROM (...) TO (...)
+        // This handles: strings, numbers, MINVALUE, MAXVALUE, and multi-column values
+        if (preg_match("/FOR VALUES FROM \((.+?)\) TO \((.+?)\)$/i", $expression, $matches)) {
+            return [
+                'type' => 'RANGE',
+                'from' => self::cleanBoundaryValue($matches[1]),
+                'to' => self::cleanBoundaryValue($matches[2]),
+                'from_raw' => $matches[1],
+                'to_raw' => $matches[2],
+            ];
         }
 
-        if (preg_match("/FOR VALUES IN \((.+)\)/i", $expression, $matches)) {
+        // Handle LIST partitions
+        if (preg_match("/FOR VALUES IN \((.+)\)$/i", $expression, $matches)) {
             return ['type' => 'LIST', 'values' => $matches[1]];
         }
 
+        // Handle HASH partitions
         if (preg_match("/FOR VALUES WITH \(modulus (\d+), remainder (\d+)\)/i", $expression, $matches)) {
-            return ['type' => 'HASH', 'modulus' => $matches[1], 'remainder' => $matches[2]];
+            return ['type' => 'HASH', 'modulus' => (int) $matches[1], 'remainder' => (int) $matches[2]];
         }
 
+        // Handle DEFAULT partition
         if (stripos($expression, 'DEFAULT') !== false) {
             return ['type' => 'DEFAULT'];
         }
 
         return null;
+    }
+
+    /**
+     * Clean a boundary value by removing quotes and trimming.
+     *
+     * Handles:
+     * - 'quoted strings' -> quoted strings
+     * - MINVALUE/MAXVALUE -> MINVALUE/MAXVALUE (preserved)
+     * - numeric values -> as-is
+     * - multi-column values -> first value for comparison purposes
+     *
+     * @param string $value The raw boundary value
+     * @return string The cleaned value
+     */
+    protected static function cleanBoundaryValue(string $value): string
+    {
+        $value = trim($value);
+
+        // Handle multi-column - extract first value for comparison
+        if (str_contains($value, ',')) {
+            // Split by comma but respect quoted strings
+            preg_match("/^('[^']*'|[^,]+)/", $value, $firstMatch);
+            $value = trim($firstMatch[0] ?? $value);
+        }
+
+        // Remove surrounding single quotes
+        if (preg_match("/^'(.*)'$/s", $value, $matches)) {
+            return $matches[1];
+        }
+
+        return $value;
     }
 
     public static function healthCheck(string $table): array

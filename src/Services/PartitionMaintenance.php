@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Uzbek\LaravelPartitionManager\Services;
 
 use Uzbek\LaravelPartitionManager\Builders\AbstractSubPartitionBuilder;
+use Uzbek\LaravelPartitionManager\Exceptions\InvalidPartitionTypeException;
+use Uzbek\LaravelPartitionManager\Exceptions\PartitionNotFoundException;
 use Uzbek\LaravelPartitionManager\Partition;
 use Uzbek\LaravelPartitionManager\Traits\SqlHelper;
 use Illuminate\Support\Facades\DB;
@@ -48,8 +50,10 @@ class PartitionMaintenance
     public static function reindex(string $partition, bool $concurrently = false): void
     {
         $quotedPartition = self::quoteIdentifier($partition);
-        $concurrent = $concurrently ? 'CONCURRENTLY ' : '';
-        DB::statement("REINDEX {$concurrent}TABLE {$quotedPartition}");
+        $sql = $concurrently
+            ? "REINDEX TABLE CONCURRENTLY {$quotedPartition}"
+            : "REINDEX TABLE {$quotedPartition}";
+        DB::statement($sql);
     }
 
     public static function reindexAll(string $table, bool $concurrently = false): void
@@ -139,7 +143,7 @@ class PartitionMaintenance
         if ($partitionExpression === null) {
             $partitionExpression = self::getPartitionExpression($table, $partitionName);
             if ($partitionExpression === null) {
-                throw new \InvalidArgumentException("Could not find partition '{$partitionName}' in table '{$table}'");
+                throw new PartitionNotFoundException("Could not find partition '{$partitionName}' in table '{$table}'");
             }
         }
 
@@ -197,7 +201,7 @@ class PartitionMaintenance
             'RANGE' => "FOR VALUES FROM (" . self::formatSqlValue($subPartition['from']) . ") TO (" . self::formatSqlValue($subPartition['to']) . ")",
             'LIST' => "FOR VALUES IN (" . implode(', ', array_map(fn($v) => self::formatSqlValue($v), $subPartition['values'])) . ")",
             'HASH' => "FOR VALUES WITH (modulus {$subPartition['modulus']}, remainder {$subPartition['remainder']})",
-            default => throw new \InvalidArgumentException("Unknown partition type: {$subPartition['type']}"),
+            default => throw new InvalidPartitionTypeException("Unknown partition type: {$subPartition['type']}"),
         };
 
         // Handle nested sub-partitions recursively
@@ -238,11 +242,12 @@ class PartitionMaintenance
     public static function getParallelReindexCommands(string $table, bool $concurrently = false): array
     {
         $commands = [];
-        $concurrent = $concurrently ? 'CONCURRENTLY ' : '';
 
         foreach (Partition::getPartitions($table) as $partition) {
             $quotedPartition = self::quoteIdentifier($partition->partition_name);
-            $commands[$partition->partition_name] = "REINDEX {$concurrent}TABLE {$quotedPartition}";
+            $commands[$partition->partition_name] = $concurrently
+                ? "REINDEX TABLE CONCURRENTLY {$quotedPartition}"
+                : "REINDEX TABLE {$quotedPartition}";
         }
 
         return $commands;

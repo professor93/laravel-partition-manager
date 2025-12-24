@@ -24,11 +24,12 @@ class PartitionIndex
         self::validateIndexMethod($method);
 
         $quotedTable = self::quoteIdentifier($table);
+        $quotedIndexName = self::quoteIdentifier($indexName);
         $quotedColumns = implode(', ', array_map([self::class, 'quoteIdentifier'], $columns));
         $uniqueStr = $unique ? 'UNIQUE ' : '';
         $methodStr = $method ? 'USING ' . strtoupper($method) . ' ' : '';
 
-        DB::statement("CREATE {$uniqueStr}INDEX IF NOT EXISTS {$indexName} ON {$quotedTable} {$methodStr}({$quotedColumns})");
+        DB::statement("CREATE {$uniqueStr}INDEX IF NOT EXISTS {$quotedIndexName} ON {$quotedTable} {$methodStr}({$quotedColumns})");
     }
 
     public static function createConcurrently(
@@ -41,11 +42,12 @@ class PartitionIndex
         self::validateIndexMethod($method);
 
         $quotedTable = self::quoteIdentifier($table);
+        $quotedIndexName = self::quoteIdentifier($indexName);
         $quotedColumns = implode(', ', array_map([self::class, 'quoteIdentifier'], $columns));
         $uniqueStr = $unique ? 'UNIQUE ' : '';
         $methodStr = $method ? 'USING ' . strtoupper($method) . ' ' : '';
 
-        DB::statement("CREATE {$uniqueStr}INDEX CONCURRENTLY IF NOT EXISTS {$indexName} ON {$quotedTable} {$methodStr}({$quotedColumns})");
+        DB::statement("CREATE {$uniqueStr}INDEX CONCURRENTLY IF NOT EXISTS {$quotedIndexName} ON {$quotedTable} {$methodStr}({$quotedColumns})");
     }
 
     public static function drop(string $indexName, bool $cascade = false): void

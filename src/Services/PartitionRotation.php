@@ -66,7 +66,9 @@ class PartitionRotation
         $existingNames = array_column($existingBoundaries, 'partition_name');
 
         // Start from current date, aligned to the interval boundary
-        $startDate = self::alignDateToInterval(new DateTime(), $interval);
+        // For yearly partitions, detect the anchor date from existing partitions
+        $anchorDate = self::detectAnchorDate($existingBoundaries, $interval);
+        $startDate = self::alignDateToInterval(new DateTime(), $interval, $anchorDate);
 
         $builder = Partition::for($table)->by($column);
 
@@ -91,7 +93,7 @@ class PartitionRotation
                     'daily' => $builder->daily(1, $startDate->format('Y-m-d')),
                     'weekly' => $builder->weekly(1, $startDate->format('Y-m-d')),
                     'monthly' => $builder->monthly(1, $startDate->format('Y-m-d')),
-                    'yearly' => $builder->yearly(1, (int) $startDate->format('Y')),
+                    'yearly' => $builder->yearly(1, $startDate->format('Y-m-d')),
                     'quarterly' => $builder->quarterly(1, $startDate->format('Y-m-d')),
                     default => $builder->monthly(1, $startDate->format('Y-m-d')),
                 };
@@ -112,16 +114,62 @@ class PartitionRotation
     }
 
     /**
+     * Detect the anchor date from existing partitions.
+     *
+     * For yearly partitions, this finds the month and day that partitions start on
+     * (e.g., June 1st for fiscal years). Returns null for other intervals or if
+     * no existing partitions are found.
+     *
+     * @param array $boundaries Existing partition boundaries
+     * @param string $interval The partition interval
+     * @return array|null Array with 'month' and 'day' keys, or null
+     */
+    protected static function detectAnchorDate(array $boundaries, string $interval): ?array
+    {
+        if ($interval !== 'yearly') {
+            return null;
+        }
+
+        // Find the first RANGE partition with a valid from_value
+        $rangeBoundaries = array_filter(
+            $boundaries,
+            fn($b) => $b->partition_type === 'RANGE' && $b->from_value !== null
+        );
+
+        if (empty($rangeBoundaries)) {
+            return null;
+        }
+
+        // Sort by from_value to get the earliest partition
+        usort($rangeBoundaries, fn($a, $b) => strcmp($a->from_value, $b->from_value));
+        $first = reset($rangeBoundaries);
+
+        try {
+            $fromDate = new DateTime($first->from_value);
+            return [
+                'month' => (int) $fromDate->format('n'),
+                'day' => (int) $fromDate->format('j'),
+            ];
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
+
+    /**
      * Align a date to the start of the interval period.
      *
      * For example:
      * - monthly: aligns to the first day of the month
      * - daily: keeps the date as-is
      * - weekly: aligns to Monday of the week
-     * - yearly: aligns to January 1st
+     * - yearly: aligns to the anchor date (detected from existing partitions, or January 1st)
      * - quarterly: aligns to the first day of the quarter
+     *
+     * @param DateTime $date The date to align
+     * @param string $interval The partition interval
+     * @param array|null $anchorDate Optional anchor date for yearly partitions (month/day)
      */
-    protected static function alignDateToInterval(DateTime $date, string $interval): DateTime
+    protected static function alignDateToInterval(DateTime $date, string $interval, ?array $anchorDate = null): DateTime
     {
         $aligned = clone $date;
         $aligned->setTime(0, 0, 0);
@@ -130,10 +178,36 @@ class PartitionRotation
             'daily' => $aligned,
             'weekly' => $aligned->modify('monday this week'),
             'monthly' => $aligned->modify('first day of this month'),
-            'yearly' => $aligned->modify('first day of january this year'),
+            'yearly' => self::alignToYearlyAnchor($aligned, $anchorDate),
             'quarterly' => self::alignToQuarter($aligned),
             default => $aligned->modify('first day of this month'),
         };
+    }
+
+    /**
+     * Align date to the yearly anchor date.
+     *
+     * If an anchor date is provided (month/day from existing partitions), aligns to that.
+     * Otherwise, defaults to January 1st.
+     */
+    protected static function alignToYearlyAnchor(DateTime $date, ?array $anchorDate): DateTime
+    {
+        $month = $anchorDate['month'] ?? 1;
+        $day = $anchorDate['day'] ?? 1;
+
+        $year = (int) $date->format('Y');
+
+        // Create anchor date for current year
+        $anchor = new DateTime();
+        $anchor->setDate($year, $month, $day);
+        $anchor->setTime(0, 0, 0);
+
+        // If we're before the anchor date this year, use last year's anchor
+        if ($date < $anchor) {
+            $anchor->modify('-1 year');
+        }
+
+        return $anchor;
     }
 
     /**

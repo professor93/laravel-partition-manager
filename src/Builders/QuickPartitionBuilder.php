@@ -70,10 +70,10 @@ class QuickPartitionBuilder
         $this->generateMonthly($count, $startDate);
     }
 
-    public function yearly(int $count = 5, ?int $startYear = null): void
+    public function yearly(int $count = 5, ?string $startDate = null): void
     {
         $this->partitionType = PartitionType::RANGE;
-        $this->generateYearly($count, $startYear);
+        $this->generateYearly($count, $startDate);
     }
 
     public function daily(int $count = 30, ?string $startDate = null): void
@@ -88,10 +88,10 @@ class QuickPartitionBuilder
         $this->generateWeekly($count, $startDate);
     }
 
-    public function quarterly(int $count = 8, ?int $startYear = null): void
+    public function quarterly(int $count = 8, ?string $startDate = null): void
     {
         $this->partitionType = PartitionType::RANGE;
-        $this->generateQuarterly($count, $startYear);
+        $this->generateQuarterly($count, $startDate);
     }
 
     /**
@@ -125,7 +125,7 @@ class QuickPartitionBuilder
             $next = clone $current;
             $next->modify('+1 month');
 
-            $partitionName = $this->table . '_' . $current->format('Y_m');
+            $partitionName = $this->table . '_m' . $current->format('Y_m');
             $this->createRangePartition(
                 $connection,
                 $partitionName,
@@ -135,21 +135,25 @@ class QuickPartitionBuilder
         }
     }
 
-    protected function generateYearly(int $count, ?int $startYear): void
+    protected function generateYearly(int $count, ?string $startDate): void
     {
         $this->ensurePartitionColumnSet();
 
         $connection = $this->getConnection();
-        $year = $startYear ?? (int) date('Y');
+        $start = $startDate !== null ? new DateTime($startDate) : new DateTime();
 
         for ($i = 0; $i < $count; $i++) {
-            $currentYear = $year + $i;
-            $partitionName = $this->table . '_' . $currentYear;
+            $current = clone $start;
+            $current->modify("+{$i} years");
+            $next = clone $current;
+            $next->modify('+1 year');
+
+            $partitionName = $this->table . '_y' . $current->format('Y');
             $this->createRangePartition(
                 $connection,
                 $partitionName,
-                "{$currentYear}-01-01",
-                ($currentYear + 1) . "-01-01"
+                $current->format('Y-m-d'),
+                $next->format('Y-m-d')
             );
         }
     }
@@ -167,7 +171,7 @@ class QuickPartitionBuilder
             $next = clone $current;
             $next->modify('+1 day');
 
-            $partitionName = $this->table . '_' . $current->format('Y_m_d');
+            $partitionName = $this->table . '_d' . $current->format('Y_m_d');
             $this->createRangePartition(
                 $connection,
                 $partitionName,
@@ -191,7 +195,7 @@ class QuickPartitionBuilder
             $next = clone $current;
             $next->modify('+1 week');
 
-            $partitionName = $this->table . '_' . $current->format('Y_W');
+            $partitionName = $this->table . '_w' . $current->format('Y_m_d');
             $this->createRangePartition(
                 $connection,
                 $partitionName,
@@ -201,32 +205,38 @@ class QuickPartitionBuilder
         }
     }
 
-    protected function generateQuarterly(int $count, ?int $startYear): void
+    protected function generateQuarterly(int $count, ?string $startDate): void
     {
         $this->ensurePartitionColumnSet();
 
         $connection = $this->getConnection();
-        $year = $startYear ?? (int) date('Y');
-        $quarter = 1;
+        $start = $startDate !== null ? new DateTime($startDate) : new DateTime();
+
+        // Align to first day of the current quarter
+        $month = (int) $start->format('n');
+        $quarterStart = match (true) {
+            $month <= 3 => 1,
+            $month <= 6 => 4,
+            $month <= 9 => 7,
+            default => 10,
+        };
+        $start->setDate((int) $start->format('Y'), $quarterStart, 1);
 
         for ($i = 0; $i < $count; $i++) {
-            $fromMonth = ($quarter - 1) * 3 + 1;
-            $toMonth = $fromMonth + 3;
+            $current = clone $start;
+            $current->modify("+{$i} quarters");
+            $next = clone $current;
+            $next->modify('+3 months');
 
-            $partitionName = $this->table . '_' . $year . '_q' . $quarter;
-            $fromDate = sprintf('%d-%02d-01', $year, $fromMonth);
+            $quarter = (int) ceil((int) $current->format('n') / 3);
+            $partitionName = $this->table . '_q' . $current->format('Y') . '_Q' . $quarter;
 
-            $toDate = $toMonth > 12
-                ? sprintf('%d-01-01', $year + 1)
-                : sprintf('%d-%02d-01', $year, $toMonth);
-
-            $this->createRangePartition($connection, $partitionName, $fromDate, $toDate);
-
-            $quarter++;
-            if ($quarter > 4) {
-                $quarter = 1;
-                $year++;
-            }
+            $this->createRangePartition(
+                $connection,
+                $partitionName,
+                $current->format('Y-m-d'),
+                $next->format('Y-m-d')
+            );
         }
     }
 

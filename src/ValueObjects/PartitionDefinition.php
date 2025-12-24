@@ -13,6 +13,8 @@ class PartitionDefinition
 
     protected ?AbstractSubPartitionBuilder $subPartitions = null;
 
+    protected bool $explicitName = false;
+
     private function __construct(
         protected readonly string $name,
         protected readonly PartitionType $type,
@@ -40,6 +42,16 @@ class PartitionDefinition
         return $this;
     }
 
+    /**
+     * Mark this partition as having an explicit name that should not be prefixed.
+     */
+    public function withExplicitName(): self
+    {
+        $this->explicitName = true;
+
+        return $this;
+    }
+
     public function withSubPartitions(AbstractSubPartitionBuilder $builder): self
     {
         $this->subPartitions = $builder;
@@ -60,6 +72,11 @@ class PartitionDefinition
     public function getSchema(): ?string
     {
         return $this->schema;
+    }
+
+    public function hasExplicitName(): bool
+    {
+        return $this->explicitName;
     }
 
     public function getSubPartitions(): ?AbstractSubPartitionBuilder

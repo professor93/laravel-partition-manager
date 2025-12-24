@@ -220,7 +220,9 @@ class PostgresPartitionBuilder
     ): self {
         $this->partitionType ??= PartitionType::RANGE;
 
-        $partition = RangePartition::range($name)->withRange($from, $to);
+        // Resolve % placeholder and mark as explicit name (no auto-prefix)
+        $resolvedName = $this->resolvePartitionName($name);
+        $partition = RangePartition::range($resolvedName)->withRange($from, $to)->withExplicitName();
 
         if ($schema !== null) {
             $partition->withSchema($schema);
@@ -228,7 +230,7 @@ class PostgresPartitionBuilder
 
         if ($subPartitions !== null) {
             $subPartitions->table($this->table);
-            $subPartitions->for($name);
+            $subPartitions->for($resolvedName);
             $partition->withSubPartitions($subPartitions);
         }
 
@@ -248,7 +250,9 @@ class PostgresPartitionBuilder
     ): self {
         $this->partitionType ??= PartitionType::LIST;
 
-        $partition = ListPartition::list($name)->withValues($values);
+        // Resolve % placeholder and mark as explicit name (no auto-prefix)
+        $resolvedName = $this->resolvePartitionName($name);
+        $partition = ListPartition::list($resolvedName)->withValues($values)->withExplicitName();
 
         if ($schema !== null) {
             $partition->withSchema($schema);
@@ -256,7 +260,7 @@ class PostgresPartitionBuilder
 
         if ($subPartitions !== null) {
             $subPartitions->table($this->table);
-            $subPartitions->for($name);
+            $subPartitions->for($resolvedName);
             $partition->withSubPartitions($subPartitions);
         }
 
@@ -274,7 +278,9 @@ class PostgresPartitionBuilder
     ): self {
         $this->partitionType ??= PartitionType::HASH;
 
-        $partition = HashPartition::hash($name)->withHash($modulus, $remainder);
+        // Resolve % placeholder and mark as explicit name (no auto-prefix)
+        $resolvedName = $this->resolvePartitionName($name);
+        $partition = HashPartition::hash($resolvedName)->withHash($modulus, $remainder)->withExplicitName();
 
         if ($schema !== null) {
             $partition->withSchema($schema);
@@ -282,7 +288,7 @@ class PostgresPartitionBuilder
 
         if ($subPartitions !== null) {
             $subPartitions->table($this->table);
-            $subPartitions->for($name);
+            $subPartitions->for($resolvedName);
             $partition->withSubPartitions($subPartitions);
         }
 
@@ -445,17 +451,18 @@ class PostgresPartitionBuilder
      * Add multiple yearly range partitions (non-terminal).
      *
      * @param int $count Number of partitions to create
-     * @param int|null $startYear Starting year (defaults to current year)
+     * @param string|null $startDate Starting date (defaults to current date). Yearly partitions
+     *                               can start on any date (e.g., '2024-06-01' for fiscal years).
      * @param string|null $prefix Optional name prefix. If null, uses table name + '_y'
      * @param string|null $schema Optional schema for all partitions
      */
-    public function addYearlyPartitions(int $count, ?int $startYear = null, ?string $prefix = null, ?string $schema = null): self
+    public function addYearlyPartitions(int $count, ?string $startDate = null, ?string $prefix = null, ?string $schema = null): self
     {
         $this->partitionType ??= PartitionType::RANGE;
 
-        $date = $startYear !== null
-            ? Carbon::createFromDate($startYear, 1, 1)
-            : Carbon::now()->startOfYear();
+        $date = $startDate !== null
+            ? Carbon::parse($startDate)
+            : Carbon::now();
 
         $resolvedPrefix = $prefix !== null ? $this->resolvePrefix($prefix) : "{$this->table}_y";
 
@@ -894,7 +901,10 @@ class PostgresPartitionBuilder
         $partitionTable = $partition->getName();
         $separator = (string) config('partition-manager.naming.separator', '_');
 
-        if (!str_starts_with($partitionTable, $this->table)) {
+        // Only add table prefix if:
+        // 1. The partition doesn't have an explicit name (from addRangePartition, addListPartition, etc.)
+        // 2. AND the name doesn't already start with the table name
+        if (!$partition->hasExplicitName() && !str_starts_with($partitionTable, $this->table)) {
             $partitionTable = $this->table . $separator . $partition->getName();
         }
 

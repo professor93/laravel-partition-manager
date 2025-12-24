@@ -228,6 +228,7 @@ class PostgresPartitionBuilder
 
         if ($subPartitions !== null) {
             $subPartitions->table($this->table);
+            $subPartitions->for($name);
             $partition->withSubPartitions($subPartitions);
         }
 
@@ -255,6 +256,7 @@ class PostgresPartitionBuilder
 
         if ($subPartitions !== null) {
             $subPartitions->table($this->table);
+            $subPartitions->for($name);
             $partition->withSubPartitions($subPartitions);
         }
 
@@ -280,6 +282,7 @@ class PostgresPartitionBuilder
 
         if ($subPartitions !== null) {
             $subPartitions->table($this->table);
+            $subPartitions->for($name);
             $partition->withSubPartitions($subPartitions);
         }
 
@@ -291,6 +294,7 @@ class PostgresPartitionBuilder
     public function withSubPartitions(string $partitionName, AbstractSubPartitionBuilder $builder): self
     {
         $builder->table($this->table);
+        $builder->for($partitionName);
 
         foreach ($this->partitions as $partition) {
             if ($partition->getName() === $partitionName) {

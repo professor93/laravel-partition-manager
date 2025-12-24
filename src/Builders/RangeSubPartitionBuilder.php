@@ -100,6 +100,7 @@ class RangeSubPartitionBuilder extends AbstractSubPartitionBuilder
             if ($this->tableName !== null) {
                 $subPartitions->table($this->tableName);
             }
+            $subPartitions->for($name);
             $partition->withSubPartitions($subPartitions);
         }
 

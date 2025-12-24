@@ -24,6 +24,10 @@ A powerful Laravel package for managing PostgreSQL partitioned tables. Supports 
 - [Schema Management](#schema-management)
 - [Sub-Partitioning](#sub-partitioning)
 - [Partition Management](#partition-management)
+- [Artisan Commands](#artisan-commands)
+- [Scheduler Integration](#scheduler-integration)
+- [Partition Templates](#partition-templates)
+- [Model Trait](#model-trait)
 - [Advanced Features](#advanced-features)
 - [Configuration](#configuration)
 - [Service Classes](#service-classes)
@@ -75,6 +79,11 @@ Partition::for('events')
 - **Partition Lifecycle Management**: Attach, detach, drop, analyze, vacuum operations
 - **Advanced Options**: Default partitions, check constraints, custom tablespaces, partition pruning
 - **Multi-Column Partitioning**: Partition by multiple columns or custom expressions
+- **Artisan Commands**: 8 CLI commands for partition management and maintenance
+- **Scheduler Integration**: Schedule partition rotation and creation via Laravel's scheduler
+- **Partition Templates**: Reusable partition configurations with placeholder support
+- **Model Trait**: Partition-aware Eloquent queries with scopes and helper methods
+- **Laravel Octane Support**: Proper cache management for long-running processes
 
 ## Partition Types
 
@@ -473,6 +482,452 @@ use Uzbek\LaravelPartitionManager\Facades\PartitionManager;
 $partitions = PartitionManager::getPartitions('logs');
 $isPartitioned = PartitionManager::isPartitioned('logs');
 $strategy = PartitionManager::getPartitionStrategy('logs');
+```
+
+## Artisan Commands
+
+The package provides 8 Artisan commands for managing partitions from the command line:
+
+### partition:list
+
+List all partitions for a table with size and row count:
+
+```bash
+php artisan partition:list orders
+
+# Output:
+# +------------------+------------+----------+
+# | Partition        | Rows       | Size     |
+# +------------------+------------+----------+
+# | orders_m2024_01  | 15,234     | 2.1 MB   |
+# | orders_m2024_02  | 18,456     | 2.5 MB   |
+# | orders_m2024_03  | 12,890     | 1.8 MB   |
+# +------------------+------------+----------+
+```
+
+### partition:tree
+
+Display partition hierarchy as a tree:
+
+```bash
+php artisan partition:tree orders --depth=2
+
+# Output:
+# orders (partitioned by RANGE)
+# ├── orders_2024_01 [2024-01-01 → 2024-02-01]
+# ├── orders_2024_02 [2024-02-01 → 2024-03-01]
+# └── orders_2024_03 [2024-03-01 → 2024-04-01]
+```
+
+### partition:health
+
+Run a health check on partitions:
+
+```bash
+php artisan partition:health orders
+
+# Checks for:
+# - Gaps between partitions
+# - Overlapping ranges
+# - Missing indexes
+# - Orphan data in default partition
+```
+
+### partition:ensure-future
+
+Create future partitions proactively:
+
+```bash
+# Ensure 3 monthly partitions exist
+php artisan partition:ensure-future orders created_at --count=3 --interval=monthly
+
+# With custom schema
+php artisan partition:ensure-future orders created_at --count=6 --interval=monthly --schema=archive
+```
+
+### partition:drop-old
+
+Drop partitions older than a threshold:
+
+```bash
+# Drop partitions older than 6 months
+php artisan partition:drop-old logs --keep=6
+
+# Preview without dropping
+php artisan partition:drop-old logs --keep=6 --dry-run
+```
+
+### partition:vacuum
+
+Run VACUUM on partitions:
+
+```bash
+# Vacuum specific partition
+php artisan partition:vacuum orders_2024_01
+
+# Vacuum all partitions of a table
+php artisan partition:vacuum orders --all
+
+# Full vacuum (reclaims more space, locks table)
+php artisan partition:vacuum orders_2024_01 --full
+
+# Vacuum with analyze
+php artisan partition:vacuum orders_2024_01 --analyze
+```
+
+### partition:reindex
+
+Rebuild indexes on partitions:
+
+```bash
+# Reindex specific partition
+php artisan partition:reindex orders_2024_01
+
+# Reindex concurrently (non-blocking)
+php artisan partition:reindex orders_2024_01 --concurrently
+
+# Reindex all partitions
+php artisan partition:reindex orders --all
+```
+
+### partition:analyze
+
+Update statistics for query planner:
+
+```bash
+# Analyze specific partition
+php artisan partition:analyze orders_2024_01
+
+# Analyze all partitions
+php artisan partition:analyze orders --all
+```
+
+## Scheduler Integration
+
+Schedule partition maintenance tasks using Laravel's scheduler with a fluent API:
+
+### Basic Usage
+
+In your `app/Console/Kernel.php` or `routes/console.php`:
+
+```php
+use Illuminate\Console\Scheduling\Schedule;
+
+$schedule->partition('orders', 'created_at')
+    ->ensureFuture(3, 'monthly')
+    ->daily();
+
+$schedule->partition('logs', 'created_at')
+    ->rotate(keep: 12)
+    ->monthly();
+```
+
+### Combined Operations
+
+Run both creation and rotation in a single scheduled task:
+
+```php
+$schedule->partition('events', 'created_at')
+    ->ensureFuture(3, 'monthly')
+    ->rotate(keep: 24)
+    ->schema('event_partitions')
+    ->dailyAt('02:00')
+    ->withoutOverlapping()
+    ->onOneServer();
+```
+
+### Available Methods
+
+```php
+$schedule->partition(string $table, string $column)
+    // Partition operations
+    ->ensureFuture(int $count, string $interval = 'monthly')  // Create future partitions
+    ->rotate(int $keep, bool $dropSchemas = false)            // Drop old partitions
+    ->schema(string $schema)                                   // Schema for new partitions
+
+    // Scheduling options (all Laravel scheduler methods available)
+    ->daily()
+    ->dailyAt('02:00')
+    ->weekly()
+    ->weeklyOn(1, '03:00')  // Monday at 3 AM
+    ->monthly()
+    ->monthlyOn(1, '04:00')
+    ->cron('0 2 * * *')
+    ->timezone('America/New_York')
+
+    // Constraints
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->evenInMaintenanceMode()
+    ->runInBackground()
+
+    // Callbacks
+    ->onSuccess(fn($result) => Log::info($result->summary()))
+    ->onFailure(fn($e) => Log::error($e->getMessage()))
+    ->name('partition-maintenance:orders');
+```
+
+### Result Object
+
+The scheduled task returns a `PartitionScheduleResult` object:
+
+```php
+$schedule->partition('orders', 'created_at')
+    ->ensureFuture(3, 'monthly')
+    ->rotate(keep: 12)
+    ->daily()
+    ->onSuccess(function (PartitionScheduleResult $result) {
+        if ($result->hasChanges()) {
+            Log::info($result->summary());
+            // Output: "Partition maintenance: created 2 partition(s), dropped 1 partition(s)"
+        }
+
+        echo $result->partitionsCreated;      // Number created
+        echo count($result->partitionsDropped); // Names of dropped partitions
+    });
+```
+
+## Partition Templates
+
+Templates provide reusable partition configurations that can be applied to multiple tables. The `%` placeholder is replaced with the table name.
+
+### Configuration
+
+Define templates in `config/partition-manager.php`:
+
+```php
+'templates' => [
+    'monthly_archive' => [
+        'type' => 'range',
+        'column' => 'created_at',
+        'interval' => 'monthly',
+        'count' => 12,
+        'schema' => '%_archive',        // orders → orders_archive
+        'default_partition' => true,
+        'future_partitions' => 3,
+    ],
+
+    'tenant_hash' => [
+        'type' => 'hash',
+        'column' => 'tenant_id',
+        'modulus' => 16,
+        'schema' => 'tenants',
+    ],
+
+    'status_list' => [
+        'type' => 'list',
+        'column' => 'status',
+        'values' => ['pending', 'active', 'completed', 'cancelled'],
+        'default_partition' => true,
+    ],
+],
+```
+
+### Using Templates in Migrations
+
+```php
+use Uzbek\LaravelPartitionManager\Partition;
+
+// Apply template from config
+Partition::create('orders', function($table) {
+    $table->id();
+    $table->decimal('amount');
+    $table->timestamp('created_at');
+})
+->fromTemplate('monthly_archive')
+->generate();
+
+// Override template settings
+Partition::create('events', function($table) {
+    $table->id();
+    $table->timestamp('created_at');
+})
+->fromTemplate('monthly_archive', [
+    'count' => 24,
+    'schema' => 'event_archive',
+])
+->generate();
+```
+
+### Programmatic Templates
+
+Create templates programmatically:
+
+```php
+use Uzbek\LaravelPartitionManager\Templates\PartitionTemplate;
+
+$template = PartitionTemplate::define('custom')
+    ->range('created_at')
+    ->monthly(12)
+    ->withSchema('%_partitions')
+    ->withDefaultPartition()
+    ->withFuturePartitions(3);
+
+Partition::create('logs', fn($t) => $t->id()->timestamps())
+    ->fromTemplate($template)
+    ->generate();
+```
+
+### Template Methods
+
+```php
+PartitionTemplate::define(string $name)
+    // Partition type
+    ->range(string|array $columns)
+    ->list(string $column)
+    ->hash(string $column, int $modulus)
+
+    // Intervals (for RANGE)
+    ->daily(int $count = 30)
+    ->weekly(int $count = 12)
+    ->monthly(int $count = 12)
+    ->yearly(int $count = 5)
+
+    // LIST values
+    ->withValues(array $values)
+
+    // Options
+    ->withSchema(string $schema)           // Supports % placeholder
+    ->withTablespace(string $tablespace)
+    ->withPrefix(string $prefix)           // Supports % placeholder
+    ->withDefaultPartition(bool $enabled = true)
+    ->withFuturePartitions(int $count);
+```
+
+## Model Trait
+
+The `HasPartitions` trait adds partition-aware methods to your Eloquent models:
+
+### Basic Setup
+
+```php
+use Illuminate\Database\Eloquent\Model;
+use Uzbek\LaravelPartitionManager\Traits\HasPartitions;
+
+class Order extends Model
+{
+    use HasPartitions;
+
+    // Optional: specify the partition column (default: 'created_at')
+    protected static string $partitionColumn = 'created_at';
+}
+```
+
+### Query Scopes
+
+Query specific partitions directly:
+
+```php
+// Query a specific partition by name
+Order::inPartition('orders_m2024_01')->where('status', 'pending')->get();
+
+// Query by date range (enables partition pruning)
+Order::inPartitionRange('2024-01-01', '2024-03-31')->get();
+
+// Query by value (for LIST partitions)
+Order::inPartitionValue('active')->get();
+Order::inPartitionValues(['pending', 'processing'])->get();
+```
+
+### Partition Information
+
+```php
+// Check if table is partitioned
+if (Order::isPartitioned()) {
+    // Get all partitions
+    $partitions = Order::getPartitions();
+
+    // Get partition strategy (RANGE, LIST, HASH)
+    $strategy = Order::getPartitionStrategy();
+
+    // Get statistics
+    $stats = Order::getPartitionStats();
+
+    // Get boundaries
+    $boundaries = Order::getPartitionBoundaries();
+}
+```
+
+### Finding Partitions
+
+```php
+// Find partition for a specific date (RANGE)
+$partitionName = Order::getPartitionForDate('2024-06-15');
+// Returns: 'orders_m2024_06' or null
+
+// Check if partition exists for date
+if (Order::hasPartitionForDate('2024-12-01')) {
+    // Safe to insert
+}
+
+// Find partition for a value (LIST)
+$partitionName = Order::getPartitionForValue('active');
+```
+
+### Health and Statistics
+
+```php
+// Run health check
+$health = Order::partitionHealthCheck();
+// Returns: ['gaps' => [...], 'overlaps' => [...], 'missing_indexes' => [...], 'orphan_data' => bool]
+
+// Estimate total rows
+$totalRows = Order::estimateTotalRows();
+
+// Count rows in specific partition
+$count = Order::countInPartition('orders_m2024_01');
+
+// Get oldest/newest partition
+$oldest = Order::getOldestPartition();
+$newest = Order::getNewestPartition();
+```
+
+### Query Analysis
+
+```php
+// Explain partition pruning for a query
+$query = Order::where('created_at', '>=', '2024-01-01')
+    ->where('created_at', '<', '2024-04-01');
+
+$analysis = Order::explainPartitionPruning($query);
+// Returns:
+// [
+//     'partitions_scanned' => ['orders_m2024_01', 'orders_m2024_02', 'orders_m2024_03'],
+//     'total_partitions' => 12,
+//     'pruning_effective' => true,
+//     'plan' => '...'
+// ]
+
+// Print partition tree
+echo Order::printPartitionTree();
+```
+
+### All Trait Methods
+
+```php
+// Static methods
+Order::getPartitionColumn(): string
+Order::isPartitioned(): bool
+Order::getPartitions(): array
+Order::getPartitionStrategy(): ?string
+Order::getPartitionStats(): array
+Order::getPartitionBoundaries(): array
+Order::partitionHealthCheck(): array
+Order::estimateTotalRows(): int
+Order::getPartitionForDate(string $date): ?string
+Order::getPartitionForValue(mixed $value): ?string
+Order::hasPartitionForDate(string $date): bool
+Order::explainPartitionPruning(?Builder $query = null): array
+Order::printPartitionTree(): string
+Order::countInPartition(string $partitionName): int
+Order::getOldestPartition(): ?object
+Order::getNewestPartition(): ?object
+
+// Query scopes
+Order::inPartition(string $partitionName)
+Order::inPartitionRange(string $from, string $to)
+Order::inPartitionValue(mixed $value)
+Order::inPartitionValues(array $values)
 ```
 
 ## Advanced Features
